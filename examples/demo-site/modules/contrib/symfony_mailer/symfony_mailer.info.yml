@@ -1,0 +1,7 @@
+name: Symfony Mailer
+type: module
+description: 'Provides comprehensive email services with HTML templates, attachments, and SMTP support using Symfony Mailer component'
+package: Mail
+core_version_requirement: ^9 || ^10
+project: symfony_mailer
+version: '1.4.0'

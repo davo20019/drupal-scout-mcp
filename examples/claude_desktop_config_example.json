@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "drupal-scout": {
+      "command": "python",
+      "args": ["/ABSOLUTE/PATH/TO/drupal-scout-mcp/server.py"]
+    }
+  }
+}

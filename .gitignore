@@ -1,0 +1,74 @@
+# Documentation and session files
+*.md
+docs/
+DEMO*.py
+SESSION*.md
+FINAL*.md
+*SUMMARY*.md
+*GUIDE*.md
+*LIMITATION*.md
+*COMPATIBILITY*.md
+*ANALYSIS*.md
+
+# Test files
+test_*.py
+tests/
+*.test.py
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.log
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Configuration (users create their own)
+config.json
+.config/
+
+# Cache
+*.cache
+.cache/
+__pycache__/
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# Claude-specific directories
+.claude/
+test_*.py

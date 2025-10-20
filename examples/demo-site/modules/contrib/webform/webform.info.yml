@@ -1,0 +1,7 @@
+name: Webform
+type: module
+description: 'Provides a powerful form builder with submissions management, email handlers, and conditional logic'
+package: Forms
+core_version_requirement: ^9 || ^10
+project: webform
+version: '6.2.0'

@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "drupal-scout-mcp"
+version = "0.1.0"
+description = "MCP server for discovering Drupal module functionality"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["drupal", "mcp", "module", "discovery", "development"]
+authors = [
+    {name = "David Loor", email = "davo20019@gmail.com"}
+]
+maintainers = [
+    {name = "David Loor", email = "davo20019@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastMCP",
+]
+
+dependencies = [
+    "fastmcp>=0.2.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/davo20019/drupal-scout-mcp"
+Documentation = "https://github.com/davo20019/drupal-scout-mcp#readme"
+Repository = "https://github.com/davo20019/drupal-scout-mcp.git"
+Issues = "https://github.com/davo20019/drupal-scout-mcp/issues"
+Changelog = "https://github.com/davo20019/drupal-scout-mcp/blob/main/CHANGELOG.md"
+
+[project.scripts]
+drupal-scout = "server:main"
+
+[tool.setuptools]
+packages = ["src", "src.parsers"]
+
+[tool.setuptools.package-data]
+drupal-scout-mcp = ["*.md", "examples/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

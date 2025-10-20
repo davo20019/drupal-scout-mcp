@@ -1,0 +1,8 @@
+services:
+  demo_email.sender:
+    class: Drupal\demo_email\Service\EmailSender
+    arguments:
+      - '@symfony_mailer.mailer'
+      - '@logger.factory'
+    tags:
+      - { name: service }

@@ -1,0 +1,13 @@
+services:
+  entity_print.print_builder:
+    class: Drupal\entity_print\PrintBuilder
+    arguments:
+      - '@entity_type.manager'
+      - '@renderer'
+    tags:
+      - { name: service }
+
+  entity_print.pdf_engine:
+    class: Drupal\entity_print\Plugin\PdfEngine\DomPdf
+    tags:
+      - { name: pdf_engine }

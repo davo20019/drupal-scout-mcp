@@ -1,0 +1,7 @@
+name: Entity Print
+type: module
+description: 'Generate PDF and Word documents from Drupal entities. Supports views, nodes, and custom entities'
+package: Output
+core_version_requirement: ^9 || ^10
+project: entity_print
+version: '2.14.0'

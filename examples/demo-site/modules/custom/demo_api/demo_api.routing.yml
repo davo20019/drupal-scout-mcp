@@ -1,0 +1,15 @@
+demo_api.products:
+  path: '/api/products'
+  defaults:
+    _controller: '\Drupal\demo_api\Controller\ApiController::getProducts'
+  methods: [GET]
+  requirements:
+    _permission: 'access content'
+
+demo_api.product:
+  path: '/api/products/{id}'
+  defaults:
+    _controller: '\Drupal\demo_api\Controller\ApiController::getProduct'
+  methods: [GET]
+  requirements:
+    _permission: 'access content'

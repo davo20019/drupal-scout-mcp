@@ -1,0 +1,7 @@
+name: Swift Mailer
+type: module
+description: 'Legacy email service using Swift Mailer library. DEPRECATED - use Symfony Mailer instead'
+package: Mail
+core_version_requirement: ^9 || ^10
+project: swiftmailer
+version: '2.5.0'

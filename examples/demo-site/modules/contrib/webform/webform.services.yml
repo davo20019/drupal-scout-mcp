@@ -1,0 +1,13 @@
+services:
+  webform.submission_handler:
+    class: Drupal\webform\WebformSubmissionHandler
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+    tags:
+      - { name: service }
+
+  webform.email_handler:
+    class: Drupal\webform\Plugin\WebformHandler\EmailWebformHandler
+    tags:
+      - { name: webform_handler }

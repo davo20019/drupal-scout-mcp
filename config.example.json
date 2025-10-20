@@ -1,0 +1,10 @@
+{
+  "drupal_root": "/path/to/your/drupal",
+  "modules_path": "web/modules",
+  "exclude_paths": [
+    "*/node_modules/*",
+    "*/vendor/*",
+    "*/tests/*",
+    "*/test/*"
+  ]
+}

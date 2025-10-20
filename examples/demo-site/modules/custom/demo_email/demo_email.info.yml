@@ -1,0 +1,7 @@
+name: Demo Email
+type: module
+description: 'Provides HTML email notification functionality for the site'
+package: Custom
+core_version_requirement: ^9 || ^10
+dependencies:
+  - symfony_mailer

@@ -1,0 +1,7 @@
+services:
+  swiftmailer.transport:
+    class: Drupal\swiftmailer\Plugin\Mail\SwiftMailer
+    arguments:
+      - '@config.factory'
+    tags:
+      - { name: mail }
