@@ -1,5 +1,6 @@
 # Documentation and session files
 *.md
+!README.md
 docs/
 DEMO*.py
 SESSION*.md
