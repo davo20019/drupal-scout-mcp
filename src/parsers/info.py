@@ -2,7 +2,7 @@
 
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 def parse_info_file(file_path: Path) -> Dict:

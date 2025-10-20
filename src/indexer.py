@@ -83,9 +83,6 @@ class ModuleIndexer:
             # Get module directory (parent of .info.yml)
             module_dir = info_file.parent
 
-            # Extract module machine name from filename
-            module_name = info_file.stem
-
             modules.append(module_dir)
 
         return modules

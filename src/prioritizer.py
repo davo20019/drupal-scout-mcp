@@ -121,7 +121,7 @@ class ResultPrioritizer:
             output.append("")
 
         # Recommendation
-        output.append(f"💡 RECOMMENDATION:")
+        output.append("💡 RECOMMENDATION:")
         output.append(f"   {check_result['recommendation']}")
 
         return '\n'.join(output)
