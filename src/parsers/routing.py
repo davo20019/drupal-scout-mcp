@@ -17,7 +17,7 @@ def parse_routing_file(file_path: Path) -> Dict:
         - routes: List of route definitions
     """
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
         routes = []
@@ -27,25 +27,25 @@ def parse_routing_file(file_path: Path) -> Dict:
                 continue
 
             route_info = {
-                'name': route_name,
-                'path': definition.get('path', ''),
-                'controller': _extract_controller(definition),
-                'methods': definition.get('methods', []),
-                'requirements': definition.get('requirements', {}),
-                'keywords': _extract_route_keywords(route_name, definition),
+                "name": route_name,
+                "path": definition.get("path", ""),
+                "controller": _extract_controller(definition),
+                "methods": definition.get("methods", []),
+                "requirements": definition.get("requirements", {}),
+                "keywords": _extract_route_keywords(route_name, definition),
             }
             routes.append(route_info)
 
         return {
-            'routes': routes,
-            'file_path': str(file_path),
+            "routes": routes,
+            "file_path": str(file_path),
         }
 
     except Exception as e:
         return {
-            'error': str(e),
-            'file_path': str(file_path),
-            'routes': [],
+            "error": str(e),
+            "file_path": str(file_path),
+            "routes": [],
         }
 
 
@@ -55,14 +55,14 @@ def _extract_controller(definition: Dict) -> str:
 
     Can be in 'defaults._controller', 'defaults._form', etc.
     """
-    defaults = definition.get('defaults', {})
+    defaults = definition.get("defaults", {})
 
     # Try common controller keys
-    for key in ['_controller', '_form', '_entity_form', '_entity_list']:
+    for key in ["_controller", "_form", "_entity_form", "_entity_list"]:
         if key in defaults:
             return defaults[key]
 
-    return ''
+    return ""
 
 
 def _extract_route_keywords(route_name: str, definition: Dict) -> List[str]:
@@ -77,18 +77,18 @@ def _extract_route_keywords(route_name: str, definition: Dict) -> List[str]:
     keywords = []
 
     # Add route name parts
-    keywords.extend(route_name.split('.'))
-    keywords.extend(route_name.split('_'))
+    keywords.extend(route_name.split("."))
+    keywords.extend(route_name.split("_"))
 
     # Add path segments
-    path = definition.get('path', '')
-    segments = [s for s in path.split('/') if s and not s.startswith('{')]
+    path = definition.get("path", "")
+    segments = [s for s in path.split("/") if s and not s.startswith("{")]
     keywords.extend(segments)
 
     # Add controller class name
     controller = _extract_controller(definition)
     if controller:
-        class_name = controller.split('::')[0].split('\\')[-1]
+        class_name = controller.split("::")[0].split("\\")[-1]
         keywords.append(class_name.lower())
 
     return list(set(k.lower() for k in keywords if len(k) > 2))

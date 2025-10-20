@@ -11,11 +11,6 @@ FINAL*.md
 *COMPATIBILITY*.md
 *ANALYSIS*.md
 
-# Test files
-test_*.py
-tests/
-*.test.py
-
 # Python
 __pycache__/
 *.py[cod]
@@ -72,4 +67,3 @@ htmlcov/
 
 # Claude-specific directories
 .claude/
-test_*.py

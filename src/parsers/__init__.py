@@ -6,8 +6,8 @@ from .routing import parse_routing_file
 from .php import parse_php_file
 
 __all__ = [
-    'parse_info_file',
-    'parse_services_file',
-    'parse_routing_file',
-    'parse_php_file',
+    "parse_info_file",
+    "parse_services_file",
+    "parse_routing_file",
+    "parse_php_file",
 ]

@@ -23,36 +23,36 @@ def parse_php_file(file_path: Path) -> Dict:
         Dictionary with extracted PHP structures
     """
     try:
-        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             content = f.read()
 
         return {
-            'namespace': _extract_namespace(content),
-            'classes': _extract_classes(content),
-            'functions': _extract_functions(content),
-            'hooks': _extract_hooks(content),
-            'uses': _extract_uses(content),
-            'keywords': _extract_php_keywords(content),
-            'file_path': str(file_path),
+            "namespace": _extract_namespace(content),
+            "classes": _extract_classes(content),
+            "functions": _extract_functions(content),
+            "hooks": _extract_hooks(content),
+            "uses": _extract_uses(content),
+            "keywords": _extract_php_keywords(content),
+            "file_path": str(file_path),
         }
 
     except Exception as e:
         return {
-            'error': str(e),
-            'file_path': str(file_path),
-            'namespace': '',
-            'classes': [],
-            'functions': [],
-            'hooks': [],
-            'uses': [],
-            'keywords': [],
+            "error": str(e),
+            "file_path": str(file_path),
+            "namespace": "",
+            "classes": [],
+            "functions": [],
+            "hooks": [],
+            "uses": [],
+            "keywords": [],
         }
 
 
 def _extract_namespace(content: str) -> str:
     """Extract namespace declaration."""
-    match = re.search(r'namespace\s+([\w\\]+)\s*;', content)
-    return match.group(1) if match else ''
+    match = re.search(r"namespace\s+([\w\\]+)\s*;", content)
+    return match.group(1) if match else ""
 
 
 def _extract_classes(content: str) -> List[Dict]:
@@ -67,13 +67,13 @@ def _extract_classes(content: str) -> List[Dict]:
     classes = []
 
     # Pattern: class ClassName extends Parent implements Interface
-    pattern = r'class\s+(\w+)(?:\s+extends\s+([\w\\]+))?(?:\s+implements\s+([\w\\,\s]+))?'
+    pattern = r"class\s+(\w+)(?:\s+extends\s+([\w\\]+))?(?:\s+implements\s+([\w\\,\s]+))?"
 
     for match in re.finditer(pattern, content):
         class_info = {
-            'name': match.group(1),
-            'extends': match.group(2) if match.group(2) else None,
-            'implements': _parse_implements(match.group(3)) if match.group(3) else [],
+            "name": match.group(1),
+            "extends": match.group(2) if match.group(2) else None,
+            "implements": _parse_implements(match.group(3)) if match.group(3) else [],
         }
         classes.append(class_info)
 
@@ -84,7 +84,7 @@ def _parse_implements(implements_str: str) -> List[str]:
     """Parse implements clause into list of interface names."""
     if not implements_str:
         return []
-    return [i.strip() for i in implements_str.split(',')]
+    return [i.strip() for i in implements_str.split(",")]
 
 
 def _extract_functions(content: str) -> List[str]:
@@ -94,12 +94,12 @@ def _extract_functions(content: str) -> List[str]:
     functions = []
 
     # Pattern: function functionName(
-    pattern = r'function\s+(\w+)\s*\('
+    pattern = r"function\s+(\w+)\s*\("
 
     for match in re.finditer(pattern, content):
         func_name = match.group(1)
         # Exclude hook functions (they start with module name + '_hook')
-        if not func_name.startswith('hook_'):
+        if not func_name.startswith("hook_"):
             functions.append(func_name)
 
     return functions
@@ -114,7 +114,7 @@ def _extract_hooks(content: str) -> List[str]:
     hooks = []
 
     # Pattern: function modulename_hook_
-    pattern = r'function\s+(\w+_hook_\w+)\s*\('
+    pattern = r"function\s+(\w+_hook_\w+)\s*\("
 
     for match in re.finditer(pattern, content):
         hooks.append(match.group(1))
@@ -127,7 +127,7 @@ def _extract_uses(content: str) -> List[str]:
     uses = []
 
     # Pattern: use Full\Class\Name;
-    pattern = r'use\s+([\w\\]+)(?:\s+as\s+\w+)?\s*;'
+    pattern = r"use\s+([\w\\]+)(?:\s+as\s+\w+)?\s*;"
 
     for match in re.finditer(pattern, content):
         uses.append(match.group(1))
@@ -147,24 +147,24 @@ def _extract_php_keywords(content: str) -> List[str]:
     keywords = []
 
     # Extract from DocBlock tags
-    doc_pattern = r'@(\w+)'
+    doc_pattern = r"@(\w+)"
     keywords.extend(re.findall(doc_pattern, content))
 
     # Extract class names
-    class_pattern = r'class\s+(\w+)'
+    class_pattern = r"class\s+(\w+)"
     keywords.extend(re.findall(class_pattern, content))
 
     # Extract function names
-    func_pattern = r'function\s+(\w+)'
+    func_pattern = r"function\s+(\w+)"
     keywords.extend(re.findall(func_pattern, content))
 
     # Common functionality indicators in comments
-    comment_pattern = r'//\s*(.+)$|/\*\*?\s*\*\s*(.+)$'
+    comment_pattern = r"//\s*(.+)$|/\*\*?\s*\*\s*(.+)$"
     for match in re.finditer(comment_pattern, content, re.MULTILINE):
         comment_text = match.group(1) or match.group(2)
         if comment_text:
             # Extract words from comments
-            words = re.findall(r'\b[a-zA-Z]{4,}\b', comment_text)
+            words = re.findall(r"\b[a-zA-Z]{4,}\b", comment_text)
             keywords.extend(words)
 
     # Deduplicate and filter

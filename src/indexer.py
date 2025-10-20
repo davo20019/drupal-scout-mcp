@@ -21,13 +21,16 @@ class ModuleIndexer:
         """
         self.drupal_root = Path(drupal_root)
         self.config = config or {}
-        self.modules_path = self.config.get('modules_path', 'modules')
-        self.exclude_paths = self.config.get('exclude_paths', [
-            '*/node_modules/*',
-            '*/vendor/*',
-            '*/tests/*',
-            '*/test/*',
-        ])
+        self.modules_path = self.config.get("modules_path", "modules")
+        self.exclude_paths = self.config.get(
+            "exclude_paths",
+            [
+                "*/node_modules/*",
+                "*/vendor/*",
+                "*/tests/*",
+                "*/test/*",
+            ],
+        )
 
         # Module index
         self.modules = {}
@@ -48,14 +51,22 @@ class ModuleIndexer:
             raise ValueError(f"Modules directory not found: {modules_base}")
 
         # Scan for modules
-        custom_modules = self._scan_directory(modules_base / 'custom') if (modules_base / 'custom').exists() else []
-        contrib_modules = self._scan_directory(modules_base / 'contrib') if (modules_base / 'contrib').exists() else []
+        custom_modules = (
+            self._scan_directory(modules_base / "custom")
+            if (modules_base / "custom").exists()
+            else []
+        )
+        contrib_modules = (
+            self._scan_directory(modules_base / "contrib")
+            if (modules_base / "contrib").exists()
+            else []
+        )
 
         # Index each module
         indexed = {
-            'custom': [self._index_module(m) for m in custom_modules],
-            'contrib': [self._index_module(m) for m in contrib_modules],
-            'total': len(custom_modules) + len(contrib_modules),
+            "custom": [self._index_module(m) for m in custom_modules],
+            "contrib": [self._index_module(m) for m in contrib_modules],
+            "total": len(custom_modules) + len(contrib_modules),
         }
 
         # Store in instance
@@ -75,7 +86,7 @@ class ModuleIndexer:
             return modules
 
         # Find all .info.yml files
-        for info_file in directory.rglob('*.info.yml'):
+        for info_file in directory.rglob("*.info.yml"):
             # Skip excluded paths
             if self._is_excluded(info_file):
                 continue
@@ -92,7 +103,7 @@ class ModuleIndexer:
         path_str = str(path)
         for pattern in self.exclude_paths:
             # Simple glob-like matching
-            pattern_parts = pattern.split('*')
+            pattern_parts = pattern.split("*")
             if all(part in path_str for part in pattern_parts if part):
                 return True
         return False
@@ -111,17 +122,19 @@ class ModuleIndexer:
 
         # Find and parse .services.yml
         services_file = module_dir / f"{module_name}.services.yml"
-        services = parse_services_file(services_file) if services_file.exists() else {'services': []}
+        services = (
+            parse_services_file(services_file) if services_file.exists() else {"services": []}
+        )
 
         # Find and parse .routing.yml
         routing_file = module_dir / f"{module_name}.routing.yml"
-        routing = parse_routing_file(routing_file) if routing_file.exists() else {'routes': []}
+        routing = parse_routing_file(routing_file) if routing_file.exists() else {"routes": []}
 
         # Find and parse PHP files in src/
-        src_dir = module_dir / 'src'
+        src_dir = module_dir / "src"
         php_files = []
         if src_dir.exists():
-            for php_file in src_dir.rglob('*.php'):
+            for php_file in src_dir.rglob("*.php"):
                 php_files.append(parse_php_file(php_file))
 
         # Find and parse .module file
@@ -130,46 +143,47 @@ class ModuleIndexer:
 
         # Combine all data
         indexed = {
-            'machine_name': module_name,
-            'name': info.get('name', module_name),
-            'description': info.get('description', ''),
-            'type': info.get('type', 'module'),
-            'package': info.get('package', 'Other'),
-            'dependencies': info.get('dependencies', []),
-            'services': services.get('services', []),
-            'routes': routing.get('routes', []),
-            'hooks': module_hooks.get('hooks', []),
-            'classes': [cls for php in php_files for cls in php.get('classes', [])],
-            'path': str(module_dir),
-            'keywords': self._collect_keywords(info, services, routing, php_files, module_hooks),
+            "machine_name": module_name,
+            "name": info.get("name", module_name),
+            "description": info.get("description", ""),
+            "type": info.get("type", "module"),
+            "package": info.get("package", "Other"),
+            "dependencies": info.get("dependencies", []),
+            "services": services.get("services", []),
+            "routes": routing.get("routes", []),
+            "hooks": module_hooks.get("hooks", []),
+            "classes": [cls for php in php_files for cls in php.get("classes", [])],
+            "path": str(module_dir),
+            "keywords": self._collect_keywords(info, services, routing, php_files, module_hooks),
         }
 
         return indexed
 
-    def _collect_keywords(self, info: Dict, services: Dict, routing: Dict,
-                          php_files: List[Dict], module_hooks: Dict) -> List[str]:
+    def _collect_keywords(
+        self, info: Dict, services: Dict, routing: Dict, php_files: List[Dict], module_hooks: Dict
+    ) -> List[str]:
         """
         Collect all keywords from various sources for search.
         """
         keywords = set()
 
         # From info.yml
-        keywords.update(info.get('keywords', []))
+        keywords.update(info.get("keywords", []))
 
         # From services
-        for service in services.get('services', []):
-            keywords.update(service.get('keywords', []))
+        for service in services.get("services", []):
+            keywords.update(service.get("keywords", []))
 
         # From routes
-        for route in routing.get('routes', []):
-            keywords.update(route.get('keywords', []))
+        for route in routing.get("routes", []):
+            keywords.update(route.get("keywords", []))
 
         # From PHP files
         for php in php_files:
-            keywords.update(php.get('keywords', []))
+            keywords.update(php.get("keywords", []))
 
         # From module hooks
-        keywords.update(module_hooks.get('keywords', []))
+        keywords.update(module_hooks.get("keywords", []))
 
         return list(keywords)
 
@@ -177,9 +191,9 @@ class ModuleIndexer:
         """
         Get indexed data for a specific module.
         """
-        for module_type in ['custom', 'contrib']:
+        for module_type in ["custom", "contrib"]:
             for module in self.modules.get(module_type, []):
-                if module['machine_name'] == module_name:
+                if module["machine_name"] == module_name:
                     return module
         return None
 
@@ -190,30 +204,30 @@ class ModuleIndexer:
         keyword = keyword.lower()
         results = []
 
-        for module_type in ['custom', 'contrib']:
+        for module_type in ["custom", "contrib"]:
             for module in self.modules.get(module_type, []):
                 # Check in keywords
-                if keyword in module.get('keywords', []):
-                    results.append({**module, 'source_type': module_type})
+                if keyword in module.get("keywords", []):
+                    results.append({**module, "source_type": module_type})
                     continue
 
                 # Check in name/description
-                if keyword in module.get('name', '').lower():
-                    results.append({**module, 'source_type': module_type})
+                if keyword in module.get("name", "").lower():
+                    results.append({**module, "source_type": module_type})
                     continue
 
-                if keyword in module.get('description', '').lower():
-                    results.append({**module, 'source_type': module_type})
+                if keyword in module.get("description", "").lower():
+                    results.append({**module, "source_type": module_type})
                     continue
 
         return results
 
     def save_index(self, output_file: Path):
         """Save index to JSON file for caching."""
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(self.modules, f, indent=2)
 
     def load_index(self, input_file: Path):
         """Load index from JSON file."""
-        with open(input_file, 'r') as f:
+        with open(input_file, "r") as f:
             self.modules = json.load(f)

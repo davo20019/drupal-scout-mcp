@@ -32,10 +32,10 @@ class ModuleSearch:
         query_terms = query.lower().split()
 
         results = {
-            'query': query,
-            'custom_modules': [],
-            'contrib_modules': [],
-            'total_matches': 0,
+            "query": query,
+            "custom_modules": [],
+            "contrib_modules": [],
+            "total_matches": 0,
         }
 
         # Determine which module types to search
@@ -54,22 +54,22 @@ class ModuleSearch:
 
                 if score > 0:
                     result = {
-                        'module': module['machine_name'],
-                        'name': module['name'],
-                        'description': module['description'],
-                        'score': score,
-                        'matches': self._get_matches(module, query_terms),
+                        "module": module["machine_name"],
+                        "name": module["name"],
+                        "description": module["description"],
+                        "score": score,
+                        "matches": self._get_matches(module, query_terms),
                     }
 
-                    if module_type == 'custom':
-                        results['custom_modules'].append(result)
+                    if module_type == "custom":
+                        results["custom_modules"].append(result)
                     else:
-                        results['contrib_modules'].append(result)
+                        results["contrib_modules"].append(result)
 
         # Sort by score
-        results['custom_modules'].sort(key=lambda x: x['score'], reverse=True)
-        results['contrib_modules'].sort(key=lambda x: x['score'], reverse=True)
-        results['total_matches'] = len(results['custom_modules']) + len(results['contrib_modules'])
+        results["custom_modules"].sort(key=lambda x: x["score"], reverse=True)
+        results["contrib_modules"].sort(key=lambda x: x["score"], reverse=True)
+        results["total_matches"] = len(results["custom_modules"]) + len(results["contrib_modules"])
 
         return results
 
@@ -85,10 +85,10 @@ class ModuleSearch:
         - Service name match: 2 points
         """
         score = 0.0
-        name_lower = module.get('name', '').lower()
-        desc_lower = module.get('description', '').lower()
-        keywords = module.get('keywords', [])
-        services = module.get('services', [])
+        name_lower = module.get("name", "").lower()
+        desc_lower = module.get("description", "").lower()
+        keywords = module.get("keywords", [])
+        services = module.get("services", [])
 
         for term in query_terms:
             # Name matches (highest priority)
@@ -107,9 +107,9 @@ class ModuleSearch:
 
             # Service matches
             for service in services:
-                if term in service.get('id', '').lower():
+                if term in service.get("id", "").lower():
                     score += 2
-                if term in service.get('keywords', []):
+                if term in service.get("keywords", []):
                     score += 1
 
         return score
@@ -121,34 +121,35 @@ class ModuleSearch:
         Returns what matched: services, classes, hooks, etc.
         """
         matches = {
-            'services': [],
-            'routes': [],
-            'classes': [],
-            'hooks': [],
+            "services": [],
+            "routes": [],
+            "classes": [],
+            "hooks": [],
         }
 
         # Find matching services
-        for service in module.get('services', []):
+        for service in module.get("services", []):
             for term in query_terms:
-                if (term in service.get('id', '').lower() or
-                    term in service.get('keywords', [])):
-                    matches['services'].append(service['id'])
+                if term in service.get("id", "").lower() or term in service.get("keywords", []):
+                    matches["services"].append(service["id"])
                     break
 
         # Find matching routes
-        for route in module.get('routes', []):
+        for route in module.get("routes", []):
             for term in query_terms:
-                if (term in route.get('name', '').lower() or
-                    term in route.get('path', '').lower() or
-                    term in route.get('keywords', [])):
-                    matches['routes'].append(route['name'])
+                if (
+                    term in route.get("name", "").lower()
+                    or term in route.get("path", "").lower()
+                    or term in route.get("keywords", [])
+                ):
+                    matches["routes"].append(route["name"])
                     break
 
         # Find matching classes
-        for cls in module.get('classes', []):
+        for cls in module.get("classes", []):
             for term in query_terms:
-                if term in cls.get('name', '').lower():
-                    matches['classes'].append(cls['name'])
+                if term in cls.get("name", "").lower():
+                    matches["classes"].append(cls["name"])
                     break
 
         return matches
@@ -161,36 +162,38 @@ class ModuleSearch:
         - Listed in custom module dependencies
         - Services are injected in custom code
         """
-        contrib_modules = self.indexer.modules.get('contrib', [])
-        custom_modules = self.indexer.modules.get('custom', [])
+        contrib_modules = self.indexer.modules.get("contrib", [])
+        custom_modules = self.indexer.modules.get("custom", [])
 
         # Collect all custom dependencies and service usages
         used_modules = set()
 
         for custom in custom_modules:
             # Add dependencies
-            used_modules.update(custom.get('dependencies', []))
+            used_modules.update(custom.get("dependencies", []))
 
             # Check for service usage
-            for service in custom.get('services', []):
+            for service in custom.get("services", []):
                 # Check service arguments for contrib service references
-                for arg in service.get('arguments', []):
+                for arg in service.get("arguments", []):
                     # Service arguments like '@symfony_mailer.mailer'
-                    if '.' in arg:
-                        module_name = arg.split('.')[0]
+                    if "." in arg:
+                        module_name = arg.split(".")[0]
                         used_modules.add(module_name)
 
         # Find unused
         unused = []
         for contrib in contrib_modules:
-            module_name = contrib['machine_name']
+            module_name = contrib["machine_name"]
             if module_name not in used_modules:
-                unused.append({
-                    'module': module_name,
-                    'name': contrib['name'],
-                    'description': contrib['description'],
-                    'package': contrib.get('package', ''),
-                })
+                unused.append(
+                    {
+                        "module": module_name,
+                        "name": contrib["name"],
+                        "description": contrib["description"],
+                        "package": contrib.get("package", ""),
+                    }
+                )
 
         return unused
 
@@ -208,23 +211,25 @@ class ModuleSearch:
         results = self.search_functionality(functionality, scope="all")
 
         return {
-            'query': functionality,
-            'existing_custom': results['custom_modules'][:3],  # Top 3
-            'existing_contrib': results['contrib_modules'][:3],
-            'recommendation': self._generate_recommendation(results),
+            "query": functionality,
+            "existing_custom": results["custom_modules"][:3],  # Top 3
+            "existing_contrib": results["contrib_modules"][:3],
+            "recommendation": self._generate_recommendation(results),
         }
 
     def _generate_recommendation(self, results: Dict) -> str:
         """
         Generate a recommendation based on search results.
         """
-        custom_count = len(results['custom_modules'])
-        contrib_count = len(results['contrib_modules'])
+        custom_count = len(results["custom_modules"])
+        contrib_count = len(results["contrib_modules"])
 
         if contrib_count > 0:
-            top_contrib = results['contrib_modules'][0]
-            return (f"Consider using {top_contrib['name']} (contrib) "
-                   f"before building custom solution")
+            top_contrib = results["contrib_modules"][0]
+            return (
+                f"Consider using {top_contrib['name']} (contrib) "
+                f"before building custom solution"
+            )
 
         if custom_count > 0:
             return "Similar functionality exists in custom modules. Consider extending."
@@ -240,25 +245,21 @@ class ModuleSearch:
             show_unused: Include usage information
         """
         result = {
-            'custom': [],
-            'contrib': [],
-            'total': 0,
+            "custom": [],
+            "contrib": [],
+            "total": 0,
         }
 
         if scope in ["all", "custom"]:
-            result['custom'] = self._summarize_modules(
-                self.indexer.modules.get('custom', [])
-            )
+            result["custom"] = self._summarize_modules(self.indexer.modules.get("custom", []))
 
         if scope in ["all", "contrib"]:
-            result['contrib'] = self._summarize_modules(
-                self.indexer.modules.get('contrib', [])
-            )
+            result["contrib"] = self._summarize_modules(self.indexer.modules.get("contrib", []))
 
-        result['total'] = len(result['custom']) + len(result['contrib'])
+        result["total"] = len(result["custom"]) + len(result["contrib"])
 
         if show_unused:
-            result['unused_contrib'] = self.find_unused_contrib()
+            result["unused_contrib"] = self.find_unused_contrib()
 
         return result
 
@@ -266,14 +267,16 @@ class ModuleSearch:
         """Create summary information for modules."""
         summaries = []
         for module in modules:
-            summaries.append({
-                'machine_name': module['machine_name'],
-                'name': module['name'],
-                'description': module['description'],
-                'services_count': len(module.get('services', [])),
-                'routes_count': len(module.get('routes', [])),
-                'classes_count': len(module.get('classes', [])),
-            })
+            summaries.append(
+                {
+                    "machine_name": module["machine_name"],
+                    "name": module["name"],
+                    "description": module["description"],
+                    "services_count": len(module.get("services", [])),
+                    "routes_count": len(module.get("routes", [])),
+                    "classes_count": len(module.get("classes", [])),
+                }
+            )
         return summaries
 
     def describe_module(self, module_name: str) -> Dict:
@@ -290,11 +293,11 @@ class ModuleSearch:
 
         if not module:
             return {
-                'error': f"Module '{module_name}' not found",
-                'found': False,
+                "error": f"Module '{module_name}' not found",
+                "found": False,
             }
 
         return {
-            'found': True,
-            'module': module,
+            "found": True,
+            "module": module,
         }
