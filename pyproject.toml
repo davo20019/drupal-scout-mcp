@@ -48,14 +48,8 @@ Repository = "https://github.com/davo20019/drupal-scout-mcp.git"
 Issues = "https://github.com/davo20019/drupal-scout-mcp/issues"
 Changelog = "https://github.com/davo20019/drupal-scout-mcp/blob/main/CHANGELOG.md"
 
-[project.scripts]
-drupal-scout = "server:main"
-
 [tool.setuptools]
 packages = ["src", "src.parsers"]
-
-[tool.setuptools.package-data]
-drupal-scout-mcp = ["*.md", "examples/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
