@@ -105,7 +105,7 @@ class ResultPrioritizer:
             output.append(
                 f"   • Uninstall {len(installed_unused)} unused modules: drush pmu {' '.join([m['module'] for m in installed_unused[:3]])}..."
             )
-            output.append(f"   • Then remove from composer: composer remove drupal/MODULE_NAME")
+            output.append("   • Then remove from composer: composer remove drupal/MODULE_NAME")
         if not_installed:
             output.append(f"   • Remove {len(not_installed)} uninstalled modules from composer")
         output.append("   • This will reduce site complexity and improve performance")
