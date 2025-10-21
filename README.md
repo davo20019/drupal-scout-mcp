@@ -28,7 +28,13 @@ A Model Context Protocol **data provider** for Drupal module discovery and troub
 
 ## Installation
 
-### Quick Install
+### PyPI Installation (Recommended)
+
+```bash
+pip install drupal-scout-mcp
+```
+
+### Quick Install Script
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/davo20019/drupal-scout-mcp/main/install.sh | bash
