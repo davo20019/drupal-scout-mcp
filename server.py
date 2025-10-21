@@ -299,20 +299,29 @@ def find_unused_contrib() -> str:
     """
     Find contrib modules that aren't used by custom code.
 
+    **Enhanced with drush integration** - checks both code usage AND installation status!
+
     Identifies:
     - Modules not in any custom module dependencies
     - Modules whose services aren't injected anywhere
+    - Modules that are installed but not actually enabled
     - Potential cleanup opportunities
+
+    A module is considered "unused" if:
+    1. NOT referenced in custom code (dependencies or services) AND
+    2. Shows installation status (installed vs not installed)
+
+    This helps you safely identify modules that can be removed without breaking functionality.
 
     Great for site optimization and reducing complexity!
 
     Returns:
-        List of unused contrib modules with recommendations
+        List of unused contrib modules with installation status and recommendations
     """
     ensure_indexed()
 
-    logger.info("Finding unused contrib modules")
-    unused = searcher.find_unused_contrib()
+    logger.info("Finding unused contrib modules (with drush installation check)")
+    unused = searcher.find_unused_contrib(check_installed=True)
 
     return prioritizer.format_unused_modules(unused)
 

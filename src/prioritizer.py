@@ -63,7 +63,7 @@ class ResultPrioritizer:
         Format unused contrib modules report.
 
         Args:
-            unused: List of unused modules
+            unused: List of unused modules (with 'installed' status)
 
         Returns:
             Formatted string
@@ -71,18 +71,44 @@ class ResultPrioritizer:
         if not unused:
             return "✓ All contrib modules are being used!"
 
+        # Separate installed vs not installed
+        installed_unused = [m for m in unused if m.get("installed", True)]
+        not_installed = [m for m in unused if not m.get("installed", True)]
+
         output = [
             "⚠️  UNUSED CONTRIB MODULES:\n",
             f"Found {len(unused)} modules not referenced by custom code\n",
         ]
 
-        for module in unused:
-            output.append(f"  - {module['name']} ({module['module']})")
-            output.append(f"    {module['description']}")
-            output.append(f"    Package: {module.get('package', 'Other')}")
+        # Show installed but unused modules (higher priority to remove)
+        if installed_unused:
+            output.append(f"🔴 {len(installed_unused)} INSTALLED but unused (can be uninstalled):")
             output.append("")
+            for module in installed_unused:
+                output.append(f"  - {module['name']} ({module['module']})")
+                output.append(f"    {module['description']}")
+                output.append(f"    Package: {module.get('package', 'Other')}")
+                output.append("")
 
-        output.append("💡 Consider removing unused modules to reduce site complexity")
+        # Show not installed modules (lower priority - just cleanup)
+        if not_installed:
+            output.append(f"⚪ {len(not_installed)} NOT INSTALLED (can be removed from codebase):")
+            output.append("")
+            for module in not_installed:
+                output.append(f"  - {module['name']} ({module['module']})")
+                output.append(f"    {module['description']}")
+                output.append(f"    Package: {module.get('package', 'Other')}")
+                output.append("")
+
+        output.append("💡 RECOMMENDATIONS:")
+        if installed_unused:
+            output.append(
+                f"   • Uninstall {len(installed_unused)} unused modules: drush pmu {' '.join([m['module'] for m in installed_unused[:3]])}..."
+            )
+            output.append(f"   • Then remove from composer: composer remove drupal/MODULE_NAME")
+        if not_installed:
+            output.append(f"   • Remove {len(not_installed)} uninstalled modules from composer")
+        output.append("   • This will reduce site complexity and improve performance")
 
         return "\n".join(output)
 

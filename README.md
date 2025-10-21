@@ -107,6 +107,9 @@ Example: "Describe the webform module"
 **find_unused_contrib** - Find contrib modules that aren't used by custom code
 ```
 Example: "Find unused contrib modules"
+Enhanced: Now checks both code usage AND installation status via drush
+Shows: Installed vs not installed, actionable uninstall commands
+Helps: Safely identify modules that can be removed without breaking functionality
 ```
 
 **check_redundancy** - Check if functionality exists before building
@@ -251,16 +254,48 @@ AI: Calls reindex_modules() to update MCP's index
 Result: Module installed with AI executing commands based on your environment
 ```
 
-### Cleanup Workflow
+### Cleanup Workflow (Enhanced with Drush)
 ```
 User: "Clean up unused modules"
 MCP: find_unused_contrib()
-Result: MCP identifies devel, kint, admin_toolbar_tools as unused (based on indexed data)
+Result: "⚠️  UNUSED CONTRIB MODULES:
 
-User: "Remove them"
-AI: Uses Bash to uninstall and remove from composer
+         Found 5 modules not referenced by custom code
+
+         🔴 3 INSTALLED but unused (can be uninstalled):
+         - Devel (devel)
+           Development tools
+           Package: Development
+
+         - Kint (kint)
+           Debugging tool
+           Package: Development
+
+         - Admin Toolbar Tools (admin_toolbar_tools)
+           Extra admin toolbar features
+           Package: Administration
+
+         ⚪ 2 NOT INSTALLED (can be removed from codebase):
+         - Examples (examples)
+           Code examples
+           Package: Development
+
+         - Devel Generate (devel_generate)
+           Generate test content
+           Package: Development
+
+         💡 RECOMMENDATIONS:
+         • Uninstall 3 unused modules: drush pmu devel kint admin_toolbar_tools
+         • Then remove from composer: composer remove drupal/MODULE_NAME
+         • Remove 2 uninstalled modules from composer
+         • This will reduce site complexity and improve performance"
+
+User: "Uninstall the installed ones"
+AI: Uses Bash to run: ddev drush pmu devel kint admin_toolbar_tools
+AI: Then removes from composer: ddev composer remove drupal/devel drupal/kint drupal/admin_toolbar_tools
 AI: Calls reindex_modules() to update MCP's index
-Result: Modules removed, MCP index updated
+Result: Safely removed 3 installed modules, avoiding any that are actually in use
+        MCP's drush check prevented breaking the site
 ```
 
 ### Troubleshooting Workflow

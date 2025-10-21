@@ -154,16 +154,29 @@ class ModuleSearch:
 
         return matches
 
-    def find_unused_contrib(self) -> List[Dict]:
+    def find_unused_contrib(self, check_installed: bool = True) -> List[Dict]:
         """
         Find contrib modules not used by any custom modules.
 
         A module is "used" if:
         - Listed in custom module dependencies
         - Services are injected in custom code
+        - Installed/enabled in the database (if check_installed=True)
+
+        Args:
+            check_installed: If True, also checks if module is installed via drush.
+                           Modules that aren't installed are automatically considered unused.
+
+        Returns:
+            List of unused contrib modules with metadata
         """
         contrib_modules = self.indexer.modules.get("contrib", [])
         custom_modules = self.indexer.modules.get("custom", [])
+
+        # Get installed modules from drush if available
+        installed_modules = set()
+        if check_installed:
+            installed_modules = self._get_installed_modules()
 
         # Collect all custom dependencies and service usages
         used_modules = set()
@@ -185,17 +198,71 @@ class ModuleSearch:
         unused = []
         for contrib in contrib_modules:
             module_name = contrib["machine_name"]
-            if module_name not in used_modules:
+
+            # Check if module is used in code
+            is_used_in_code = module_name in used_modules
+
+            # Check if module is installed (only if we have that data)
+            is_installed = (
+                module_name in installed_modules
+                if installed_modules
+                else True  # If we can't check, assume installed
+            )
+
+            # Module is unused if:
+            # 1. Not used in code AND
+            # 2. Either not installed OR we're not checking installation status
+            if not is_used_in_code:
                 unused.append(
                     {
                         "module": module_name,
                         "name": contrib["name"],
                         "description": contrib["description"],
                         "package": contrib.get("package", ""),
+                        "installed": is_installed,
                     }
                 )
 
         return unused
+
+    def _get_installed_modules(self) -> set:
+        """
+        Get list of installed/enabled modules from drush.
+
+        Returns:
+            Set of installed module machine names, or empty set if drush unavailable
+        """
+        try:
+            # Import here to avoid circular dependency
+            import sys
+            from pathlib import Path
+
+            # Add server.py location to path to import run_drush_command
+            server_path = Path(__file__).parent.parent
+            if str(server_path) not in sys.path:
+                sys.path.insert(0, str(server_path))
+
+            from server import run_drush_command
+
+            # Get list of enabled modules
+            php_code = """
+            $module_handler = \\Drupal::service('module_handler');
+            $modules = $module_handler->getModuleList();
+            $module_names = array_keys($modules);
+            echo json_encode($module_names);
+            """
+
+            result = run_drush_command(["ev", php_code.strip()], timeout=10)
+
+            if result and isinstance(result, list):
+                return set(result)
+
+            return set()
+
+        except Exception:
+            # If drush not available or any error, return empty set
+            # The caller will handle this gracefully
+            return set()
 
     def check_redundancy(self, functionality: str) -> Dict:
         """
