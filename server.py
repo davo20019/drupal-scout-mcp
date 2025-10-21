@@ -153,7 +153,7 @@ def _detect_drush_command() -> Optional[List[str]]:
     return None
 
 
-def run_drush_command(args: List[str], timeout: int = 30) -> Optional[dict]:
+def run_drush_command(args: List[str], timeout: int = 30):
     """
     Run a drush command and return JSON output.
 
@@ -162,7 +162,7 @@ def run_drush_command(args: List[str], timeout: int = 30) -> Optional[dict]:
         timeout: Command timeout in seconds
 
     Returns:
-        Parsed JSON output or None if command failed
+        Parsed JSON output (dict or list) or None if command failed
     """
     drush_cmd = get_drush_command()
 
@@ -197,6 +197,7 @@ def run_drush_command(args: List[str], timeout: int = 30) -> Optional[dict]:
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse drush JSON output: {e}")
+        logger.error(f"Output was: {result.stdout[:200]}")
         return None
     except Exception as e:
         logger.error(f"Error running drush command: {e}")
@@ -3006,6 +3007,176 @@ def _get_term_usage_from_files(term_id: int, drupal_root: Path) -> Optional[dict
     # This would require parsing content exports or searching views configs
     # Not practical without database access
     return None
+
+
+@mcp.tool()
+def get_watchdog_logs(
+    severity: Optional[str] = None,
+    type: Optional[str] = None,
+    limit: int = 50
+) -> str:
+    """
+    Get recent Drupal watchdog logs (errors, warnings, notices) for debugging.
+
+    IMPORTANT: This tool requires the DBLog (dblog) module to be enabled.
+    If you get an error, use list_modules() to check if dblog is enabled first.
+
+    This tool fetches logs from Drupal's database via drush, helping AI assistants:
+    - Diagnose errors and exceptions in the application
+    - Identify warnings that might indicate issues
+    - Understand what's happening in the system
+    - Provide context for fixing code issues
+    - Suggest next steps for unresolved issues
+
+    Common use cases:
+    - "Show me recent errors"
+    - "What warnings are in the logs?"
+    - "Are there any PHP errors?"
+    - "Show me database-related errors"
+
+    Args:
+        severity: Optional filter by severity level.
+                  Options: emergency, alert, critical, error, warning, notice, info, debug
+                  Default: Shows error and warning levels
+        type: Optional filter by message type (e.g., "php", "cron", "system", "page not found")
+        limit: Number of recent log entries to return (default: 50, max: 200)
+
+    Returns:
+        Formatted log entries with severity, type, message, and timestamp.
+        Provides actionable insights for debugging.
+
+    Examples:
+        get_watchdog_logs()  # Recent errors and warnings
+        get_watchdog_logs(severity="error")  # Only errors
+        get_watchdog_logs(type="php")  # Only PHP errors
+        get_watchdog_logs(severity="warning", limit=100)  # More warnings
+
+    Prerequisites:
+        - DBLog (dblog) module must be enabled
+        - Use list_modules() to verify dblog status before calling this
+        - If dblog not enabled, suggest user runs: drush en dblog -y
+
+    Note: If DBLog is not available, guide user to check DDEV/Lando logs or web server logs instead.
+    """
+    ensure_indexed()
+
+    # Validate and cap limit
+    if limit > 200:
+        limit = 200
+    if limit < 1:
+        limit = 1
+
+    # Build drush watchdog:show command (simpler approach)
+    valid_severities = ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
+
+    args = ["watchdog:show", "--format=json", f"--count={limit}"]
+
+    # Add severity filter
+    if severity:
+        severity_lower = severity.lower()
+        if severity_lower not in valid_severities:
+            return f"Invalid severity level: {severity}\nValid options: {', '.join(valid_severities)}"
+        args.append(f"--severity={severity_lower}")
+    else:
+        # Default to errors and warnings
+        args.append("--severity=error,warning")
+
+    # Add type filter
+    if type:
+        args.append(f"--type={type}")
+
+    # Try to get logs from drush
+    result = run_drush_command(args, timeout=15)
+
+    if result is None:
+        return (
+            "Could not retrieve watchdog logs from database.\n\n"
+            "AI ASSISTANT - DIAGNOSTIC STEPS:\n"
+            "1. Call list_modules() to check if 'dblog' module is enabled\n"
+            "2. If dblog not found, call describe_module('dblog') to verify it's installed\n"
+            "3. If dblog is not enabled, explain to user:\n"
+            "   - DBLog is required for database logging\n"
+            "   - Suggest enabling it: drush en dblog -y\n"
+            "   - After enabling, logs will be captured going forward\n\n"
+            "ALTERNATIVE: If DBLog is not available, suggest checking:\n"
+            "- DDEV logs: ddev logs (if using DDEV)\n"
+            "- Lando logs: lando logs (if using Lando)\n"
+            "- PHP error log: Check settings.php for error_log configuration\n"
+            "- Web server logs: Check Apache/Nginx error logs\n"
+            "- Syslog: If syslog module is enabled, check system logs\n\n"
+            "DO NOT run bash commands yourself - guide the user to run them.\n\n"
+            "Most common fix: Enable DBLog with 'drush en dblog -y'"
+        )
+
+    # Handle both dict (single entry) and list (multiple entries) responses
+    if isinstance(result, dict):
+        result = [result]
+    elif not isinstance(result, list):
+        return "Unexpected response format from drush watchdog:show"
+
+    if len(result) == 0:
+        severity_text = severity if severity else "error/warning"
+        type_text = f" of type '{type}'" if type else ""
+        return f"No {severity_text} log entries{type_text} found in the last {limit} entries."
+
+    # Format the logs for display
+    output = []
+    output.append(f"DRUPAL WATCHDOG LOGS (most recent {len(result)} entries)\n")
+
+    # Group by severity for better organization
+    severity_groups = {}
+    for entry in result:
+        sev = entry.get("severity", "unknown").upper()
+        if sev not in severity_groups:
+            severity_groups[sev] = []
+        severity_groups[sev].append(entry)
+
+    # Display in severity order (most severe first)
+    severity_order = ["EMERGENCY", "ALERT", "CRITICAL", "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG"]
+
+    for sev_level in severity_order:
+        if sev_level not in severity_groups:
+            continue
+
+        entries = severity_groups[sev_level]
+        output.append(f"\n{sev_level} ({len(entries)} entries)")
+        output.append("=" * 80)
+
+        for entry in entries[:20]:  # Limit to 20 per severity to avoid overwhelming
+            msg_type = entry.get("type", "unknown")
+            message = entry.get("message", "No message")
+            timestamp = entry.get("timestamp", "")
+            location = entry.get("location", "")
+
+            output.append(f"\n[{timestamp}] {msg_type}")
+            output.append(f"Message: {message}")
+            if location:
+                output.append(f"Location: {location}")
+            output.append("-" * 80)
+
+    output.append(f"\n\nSHOWING {len(result)} OF REQUESTED {limit} ENTRIES")
+
+    if severity or type:
+        output.append(f"\nFilters applied:")
+        if severity:
+            output.append(f"  - Severity: {severity}")
+        if type:
+            output.append(f"  - Type: {type}")
+
+    output.append("\n\nAI ASSISTANT - SUGGESTED ACTIONS:")
+    output.append("1. For PHP errors with file locations:")
+    output.append("   - Use Read tool to examine the mentioned file and line number")
+    output.append("   - Use Edit tool to fix the code issue")
+    output.append("2. For missing module/field/entity errors:")
+    output.append("   - Use list_modules() to verify module installation status")
+    output.append("   - Use get_field_info() to check if fields exist")
+    output.append("   - Use get_entity_structure() to verify entity configuration")
+    output.append("3. For filtering logs further:")
+    output.append("   - Use get_watchdog_logs(type='php') to focus on PHP errors only")
+    output.append("   - Use get_watchdog_logs(severity='error') for critical errors only")
+    output.append("4. After fixing issues, suggest user run: drush cache:rebuild")
+
+    return "\n".join(output)
 
 
 def main():
