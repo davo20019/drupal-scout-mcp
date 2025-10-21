@@ -126,6 +126,62 @@ Shows: Reverse dependencies, circular deps, uninstall safety
 Unique: Unlike drush, shows what DEPENDS ON a module
 ```
 
+**find_hook_implementations** - Find all implementations of a Drupal hook
+```
+Example: "Which modules implement hook_form_alter?"
+Shows: All implementations with file locations and line numbers
+Use case: Debugging hook execution order, finding conflicts
+No drush needed: Pure file-based search using cached index
+```
+
+**get_entity_structure** - Get comprehensive entity type information
+```
+Example: "What fields does the node entity have?"
+Shows: Bundles, fields, view displays, form displays
+Combines: Config files + drush (if available)
+Saves ~1200 tokens vs running multiple commands
+```
+
+**get_views_summary** - Get summary of Views configurations with filtering
+```
+Example: "What views exist in the site?"
+Example: "Do we have any user views?" (filters by entity_type="users")
+Example: "Are there views showing articles?" (filters by entity_type="node")
+Shows: View names, display types (page/block/feed), paths, filters, fields, relationships
+Combines: Database active config via drush + config file parsing
+Saves ~700-900 tokens vs running drush views:list + multiple greps
+Use case: Understanding existing data displays before creating duplicates
+Supports filtering by entity type (node, users, taxonomy_term, media, etc.)
+```
+
+**get_field_info** - Get comprehensive field information with usage analysis
+```
+Example: "What fields exist on the article content type?"
+Example: "Where is field_image used?"
+Example: "Do we have a field for storing phone numbers?"
+Example: "Show me all email fields" (partial matching)
+Shows: Field types, labels, cardinality, where used (bundles), settings, requirements
+Combines: Field storage + field instance configs from database/files
+Saves ~800-1000 tokens vs running multiple field:list + config:get commands
+Use case: Understanding data structure before adding fields, avoiding duplicates
+Supports: Partial field name matching, entity type filtering, bundle usage tracking
+```
+
+**get_taxonomy_info** - Get taxonomy vocabularies, terms, and usage analysis
+```
+Example: "What taxonomy vocabularies exist?"
+Example: "Show me all terms in the categories vocabulary"
+Example: "Where is the 'Drupal' term used?" → Automatically shows usage (single match)
+Example: "Can I safely delete the 'Old News' term?" → Auto-analyzes safety
+Example: "Search for terms named 'tech'" → Shows matches with term IDs
+Shows: Vocabularies, term counts, hierarchies, usage in content/views/fields, safety analysis
+Combines: Taxonomy configs + content queries + field references
+Saves ~1000-1500 tokens vs running multiple taxonomy + node queries
+Use case: Before deleting/renaming terms, understanding taxonomy structure, finding orphans
+Unique: Auto-detects single term match and shows full usage analysis in ONE call
+Smart: Shows parent/child relationships, which content uses each term, safe-to-delete warnings
+```
+
 ### Drupal.org Tools
 
 **search_drupal_org** - Search for modules on drupal.org
@@ -232,6 +288,168 @@ Result: Shows modules with most dependents, circular dependencies,
         custom module coupling, and safe-to-remove candidates
 ```
 
+### Taxonomy Management Workflow
+```
+User: "I want to clean up old taxonomy terms"
+MCP: get_taxonomy_info()
+Result: "📚 Taxonomy Vocabularies (4 found)
+
+         • Categories (categories)
+           Description: Content categories
+           Terms: 28
+           Used by fields: field_category, field_article_category
+
+         • Tags (tags)
+           Terms: 156
+           Used by fields: field_tags
+
+         • Departments (departments)
+           Terms: 12
+           Used by fields: field_department"
+
+User: "Show me all terms in the tags vocabulary"
+MCP: get_taxonomy_info(vocabulary="tags")
+Result: "📚 Vocabulary: Tags (tags)
+         Total terms: 156
+
+         📖 Terms:
+         • Technology (tid: 42) (87 uses)
+           • AI/ML (tid: 43) (12 uses)
+           • Web Development (tid: 44) (23 uses)
+         • Business (tid: 50) (45 uses)
+         • Sports (tid: 60) (0 uses)
+         • Old Category (tid: 75) (0 uses)"
+
+User: "Can I safely delete 'Old Category'?"
+MCP: get_taxonomy_info(term_id=75)
+Result: "🏷️  Term: Old Category (tid: 75)
+         Vocabulary: Tags (tags)
+         Description: Deprecated - do not use
+
+         ✅ SAFE TO DELETE
+         This term is not used in content, views, or as a parent term."
+
+User: "What about the 'Technology' term?"
+MCP: get_taxonomy_info(term_id=42)
+Result: "🏷️  Term: Technology (tid: 42)
+         Vocabulary: Tags (tags)
+         Children: AI/ML, Web Development
+
+         📄 Used in 87 content item(s):
+         • How AI is Changing Development (article) - nid: 123
+         • Tech Trends 2024 (blog) - nid: 156
+         • Future of Web (article) - nid: 189
+         ... and 84 more
+
+         🔗 Vocabulary referenced by 2 field(s):
+         • Tags (field_tags) on article, blog
+         • Category (field_category) on article
+
+         ⚠️  WARNING: Has child terms
+         2 child term(s) will become orphaned if deleted.
+         Consider reassigning children or deleting them first.
+
+         ⚠️  CAUTION: Term is in use
+         Used in 87 content item(s) and 0 view(s).
+         Deleting will remove term references from content.
+         Consider merging with another term instead."
+
+User: "I'll keep Technology and just delete 'Old Category'"
+AI: Uses Bash to run: ddev drush taxonomy:term:delete 75
+Result: Term safely deleted with MCP's confirmation it was unused
+        Avoided accidentally breaking 87 articles by checking first
+```
+
+### Field Analysis Workflow
+```
+User: "I need to add a phone number field to the staff content type"
+MCP: get_field_info(field_name="phone")
+Result: "🔧 Fields Summary (2 fields found) - Matching: phone
+         📦 NODE:
+         • Phone Number (field_phone_number)
+           Type: telephone | Bundles: contact, vendor
+         • Mobile Phone (field_mobile_phone)
+           Type: telephone | Bundles: employee"
+
+User: "Show me details about field_phone_number"
+MCP: get_field_info(field_name="field_phone_number")
+Result: "🔧 Field: Phone Number (field_phone_number)
+         Type: telephone
+         Entity Type: node
+         Storage: Single value
+         Settings: Max length: 255
+
+         Used in 2 bundle(s):
+         • Contact (required)
+         • Vendor"
+
+User: "What fields does the article content type have?"
+MCP: get_field_info(entity_type="node")
+Result: "🔧 Fields Summary (15 fields found) - Entity type: node
+         📦 NODE:
+         • Title (title)
+           Type: string | Bundles: article, page, blog
+         • Body (body)
+           Type: text_with_summary | Bundles: article, blog
+         • Image (field_image)
+           Type: image | Bundles: article, blog, school
+         • Category (field_category)
+           Type: entity_reference | Bundles: article, blog
+         ..."
+
+User: "Perfect! I can reuse field_phone_number on the staff content type"
+Result: MCP saved ~900 tokens vs running drush field:list + multiple greps
+        Discovered existing field with same purpose
+        Avoided creating duplicate field with different name
+        Showed exactly where fields are used for informed decisions
+```
+
+### Views Discovery Workflow
+```
+User: "Do we have any views that display user data?"
+MCP: get_views_summary(entity_type="users")
+Result: "📊 Views Summary (2 views found) - Showing 'users' views only
+         ✅ User List (user_list)
+            Displays: master, page_1
+            Base: users_field_data
+         ✅ Staff Directory (staff_directory)
+            Displays: master, page_1, block_1
+            Base: users_field_data"
+
+User: "What about school content?"
+MCP: get_views_summary(entity_type="node")  # Schools are a content type
+Result: "📊 Views Summary (5 views found) - Showing 'node' views only
+         ✅ Content (content)
+            Displays: master, page_1, block_1
+            Base: node
+         ✅ Schools Directory (schools_directory)
+            Displays: master, page_1
+            Base: node_field_data
+         ✅ Blog Posts (blog)
+            Displays: master, page_1
+            Base: node_field_data"
+
+User: "Show me details about the schools_directory view"
+MCP: get_views_summary("schools_directory")
+Result: "📊 View: Schools Directory (schools_directory)
+         Status: ✅ Enabled
+         Base Table: node_field_data
+
+         Displays (2):
+         • Master [master]
+           Filters: status, type
+           Fields: title, field_address, field_principal...
+
+         • Page [page]
+           Path: /schools
+           Filters: status, type, field_district"
+
+User: "Perfect! The schools view already exists with the filters I need"
+Result: MCP saved ~800 tokens vs running drush views:list + multiple greps
+        Entity type filtering prevented showing irrelevant views
+        Helped avoid creating duplicate functionality
+```
+
 ## How It Works
 
 ### Division of Labor
@@ -296,9 +514,33 @@ Result: Shows modules with most dependents, circular dependencies,
   "drupal_root": "/var/www/drupal",
   "modules_path": "modules",
   "exclude_patterns": ["node_modules", "vendor"],
-  "cache_ttl": 3600
+  "drush_command": "drush"
 }
 ```
+
+### Drush Configuration
+
+Some tools require drush (e.g., `get_entity_structure`). The MCP auto-detects drush in common environments:
+
+**Auto-detected environments:**
+- DDEV: `ddev drush`
+- Lando: `lando drush`
+- Docksal: `fin drush`
+- Composer: `vendor/bin/drush`
+- Global: `drush`
+
+**Manual override (if auto-detection fails):**
+```json
+{
+  "drush_command": "ddev drush"
+}
+```
+
+**Examples:**
+- DDEV: `"drush_command": "ddev drush"`
+- Lando: `"drush_command": "lando drush"`
+- Custom Docker: `"drush_command": "docker-compose exec php drush"`
+- SSH remote: `"drush_command": "ssh user@host drush"`
 
 ## Performance
 

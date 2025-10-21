@@ -6,5 +6,6 @@
     "*/vendor/*",
     "*/tests/*",
     "*/test/*"
-  ]
+  ],
+  "drush_command": "drush"
 }

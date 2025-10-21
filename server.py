@@ -7,8 +7,10 @@ A Model Context Protocol server for discovering functionality in Drupal sites.
 
 import json
 import logging
+import shutil
+import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from fastmcp import FastMCP
 from src.indexer import ModuleIndexer
@@ -29,6 +31,7 @@ searcher: Optional[ModuleSearch] = None
 prioritizer = ResultPrioritizer()
 drupal_org_api = DrupalOrgAPI()
 config = {}
+_drush_command_cache: Optional[List[str]] = None
 
 
 def load_config() -> dict:
@@ -75,6 +78,129 @@ def ensure_indexed():
 
         searcher = ModuleSearch(indexer)
         logger.info(f"Indexed {indexer.modules.get('total', 0)} modules")
+
+
+def get_drush_command() -> Optional[List[str]]:
+    """
+    Get drush command with caching and smart detection.
+
+    Returns:
+        List of command parts (e.g., ["ddev", "drush"]) or None if not found
+    """
+    global _drush_command_cache
+
+    if _drush_command_cache is not None:
+        return _drush_command_cache
+
+    # Try detection
+    _drush_command_cache = _detect_drush_command()
+    return _drush_command_cache
+
+
+def _detect_drush_command() -> Optional[List[str]]:
+    """
+    Detect how to run drush in this environment.
+
+    Priority:
+    1. User config (drush_command in config.json)
+    2. Auto-detect environment (DDEV, Lando, Docksal)
+    3. Composer vendor/bin/drush
+    4. Global drush
+
+    Returns:
+        List of command parts or None if drush not found
+    """
+    ensure_indexed()  # Make sure config is loaded
+
+    drupal_root = Path(config.get("drupal_root"))
+
+    # 1. User explicitly configured drush command
+    if config.get("drush_command"):
+        cmd = config["drush_command"].split()
+        logger.info(f"Using configured drush command: {' '.join(cmd)}")
+        return cmd
+
+    # 2. Auto-detect development environment
+
+    # DDEV
+    if (drupal_root / ".ddev" / "config.yaml").exists():
+        logger.info("Detected DDEV environment")
+        return ["ddev", "drush"]
+
+    # Lando
+    if (drupal_root / ".lando.yml").exists():
+        logger.info("Detected Lando environment")
+        return ["lando", "drush"]
+
+    # Docksal
+    if (drupal_root / ".docksal").exists():
+        logger.info("Detected Docksal environment")
+        return ["fin", "drush"]
+
+    # 3. Check for Composer-installed drush in vendor/bin
+    vendor_drush = drupal_root / "vendor" / "bin" / "drush"
+    if vendor_drush.exists() and vendor_drush.is_file():
+        logger.info(f"Using Composer drush: {vendor_drush}")
+        return [str(vendor_drush)]
+
+    # 4. Check for global drush
+    if shutil.which("drush"):
+        logger.info("Using global drush")
+        return ["drush"]
+
+    # No drush found
+    logger.warning("Drush not found in any expected location")
+    return None
+
+
+def run_drush_command(args: List[str], timeout: int = 30) -> Optional[dict]:
+    """
+    Run a drush command and return JSON output.
+
+    Args:
+        args: Drush command arguments (e.g., ["pm:list", "--format=json"])
+        timeout: Command timeout in seconds
+
+    Returns:
+        Parsed JSON output or None if command failed
+    """
+    drush_cmd = get_drush_command()
+
+    if not drush_cmd:
+        logger.error("Cannot run drush command: drush not found")
+        return None
+
+    drupal_root = Path(config.get("drupal_root"))
+    full_cmd = [*drush_cmd, *args]
+
+    try:
+        logger.debug(f"Running: {' '.join(full_cmd)}")
+        result = subprocess.run(
+            full_cmd,
+            cwd=str(drupal_root),
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Drush command failed: {result.stderr}")
+            return None
+
+        if result.stdout.strip():
+            return json.loads(result.stdout)
+
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"Drush command timed out after {timeout}s")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse drush JSON output: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error running drush command: {e}")
+        return None
 
 
 @mcp.tool()
@@ -1055,6 +1181,1822 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
     output.append("   4. Check if the issue has a recommended workaround")
 
     return "\n".join(output)
+
+
+@mcp.tool()
+def find_hook_implementations(hook_name: str) -> str:
+    """
+    Find all implementations of a Drupal hook across modules.
+
+    This tool searches indexed modules to find where a specific Drupal hook
+    is implemented. Useful for debugging hook execution order, finding conflicts,
+    or understanding what code runs for a particular hook.
+
+    IMPORTANT: This searches the pre-indexed modules. If you recently added
+    a hook implementation, call reindex_modules() first.
+
+    No drush needed - pure file-based search using cached index.
+
+    Common use cases:
+    - "Why isn't my hook_form_alter working?" → See execution order
+    - "Which modules alter node pages?" → Find hook_node_view implementations
+    - "What runs on user login?" → Find hook_user_login implementations
+
+    Args:
+        hook_name: The hook to search for (e.g., "hook_form_alter", "hook_node_insert")
+                   Can be the generic hook name or module-specific implementation
+
+    Returns:
+        List of modules implementing the hook with file locations and line numbers
+    """
+    ensure_indexed()
+
+    logger.info(f"Searching for hook implementations: {hook_name}")
+
+    # Normalize hook name (remove module prefix if provided)
+    # e.g., "my_module_hook_form_alter" → "hook_form_alter"
+    if "_hook_" in hook_name and not hook_name.startswith("hook_"):
+        # Extract just the hook part
+        parts = hook_name.split("_hook_")
+        if len(parts) == 2:
+            hook_name = "hook_" + parts[1]
+
+    results = {
+        "custom": [],
+        "contrib": [],
+        "core": [],
+    }
+
+    # Search all indexed modules
+    for module_type in ["custom", "contrib", "core"]:
+        modules = indexer.modules.get(module_type, [])
+
+        for module in modules:
+            hooks = module.get("hooks", [])
+
+            # Check if this module implements the hook
+            for hook in hooks:
+                # Handle both old format (strings) and new format (dicts with line numbers)
+                if isinstance(hook, dict):
+                    hook_impl_name = hook.get("name", "")
+                    line_number = hook.get("line")
+                else:
+                    # Backward compatibility with old string format
+                    hook_impl_name = hook
+                    line_number = None
+
+                # Check if this hook matches what we're looking for
+                # Match pattern: module_name + hook_name (e.g., "my_module_hook_form_alter")
+                if hook_name in hook_impl_name:
+                    module_file = f"{module['machine_name']}.module"
+                    file_location = f"{module_file}:{line_number}" if line_number else module_file
+
+                    results[module_type].append(
+                        {
+                            "module": module["machine_name"],
+                            "name": module["name"],
+                            "hook_function": hook_impl_name,
+                            "file": file_location,
+                            "path": module["path"],
+                        }
+                    )
+
+    # Count total implementations
+    total = len(results["custom"]) + len(results["contrib"]) + len(results["core"])
+
+    # Format output
+    output = [f"🔍 **Hook Implementations: `{hook_name}`**\n"]
+
+    if total == 0:
+        output.append(f"❌ **No implementations found**\n")
+        output.append(f"No modules implement `{hook_name}`.\n")
+        output.append("**Possible reasons:**")
+        output.append("• Hook name might be misspelled")
+        output.append("• Module implementing it isn't indexed")
+        output.append("• Hook implementation was recently added (try reindex_modules())")
+        return "\n".join(output)
+
+    output.append(f"**Found {total} implementation{'s' if total != 1 else ''}**\n")
+
+    # Show custom implementations
+    if results["custom"]:
+        output.append(f"## 🔧 Custom Modules ({len(results['custom'])})\n")
+        for impl in results["custom"]:
+            output.append(f"**{impl['name']}** (`{impl['module']}`)")
+            output.append(f"   • Function: `{impl['hook_function']}`")
+            output.append(f"   • Location: `{impl['file']}`")
+            output.append(f"   • Path: `{impl['path']}`")
+            output.append("")
+
+    # Show contrib implementations
+    if results["contrib"]:
+        output.append(f"## 📦 Contrib Modules ({len(results['contrib'])})\n")
+        # Limit to first 10 to avoid token overload
+        for impl in results["contrib"][:10]:
+            output.append(f"**{impl['name']}** (`{impl['module']}`)")
+            output.append(f"   • Function: `{impl['hook_function']}`")
+            output.append(f"   • Location: `{impl['file']}`")
+            output.append("")
+        if len(results["contrib"]) > 10:
+            output.append(f"*... and {len(results['contrib']) - 10} more contrib modules*\n")
+
+    # Show core implementations
+    if results["core"]:
+        output.append(f"## ⚙️  Core Modules ({len(results['core'])})\n")
+        # Limit to first 5
+        for impl in results["core"][:5]:
+            output.append(f"**{impl['name']}** (`{impl['module']}`)")
+            output.append(f"   • Function: `{impl['hook_function']}`")
+            output.append("")
+        if len(results["core"]) > 5:
+            output.append(f"*... and {len(results['core']) - 5} more core modules*\n")
+
+    # Add debugging tips
+    output.append("\n## 💡 **Debugging Tips**\n")
+    output.append("**Hook execution order:**")
+    output.append("• Core hooks run first")
+    output.append("• Then contrib (alphabetically by module name)")
+    output.append("• Then custom (alphabetically by module name)")
+    output.append("• Use hook_module_implements_alter() to change order\n")
+
+    output.append("**Common issues:**")
+    output.append("• Clear cache after adding new hooks")
+    output.append("• Check hook function name matches module name")
+    output.append("• Verify .module file is in module root")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def get_entity_structure(entity_type: str) -> str:
+    """
+    Get comprehensive structure information for a Drupal entity type.
+
+    **USE THIS TOOL** for any questions about content types, bundles, or entity fields.
+
+    This tool answers questions like:
+    - "What are the content types?" → Use entity_type="node"
+    - "What content types are created?" → Use entity_type="node"
+    - "How many content types do we have?" → Use entity_type="node"
+    - "List all content types" → Use entity_type="node"
+    - "What bundles exist for nodes?" → Use entity_type="node"
+    - "What fields does the Article content type have?" → Use entity_type="node"
+    - "What are all the content types and their fields?" → Use entity_type="node"
+    - "How many taxonomy vocabularies exist?" → Use entity_type="taxonomy_term"
+    - "What fields does the user entity have?" → Use entity_type="user"
+
+    NOTE: In Drupal, "content types" are bundles of the "node" entity type.
+    Always use entity_type="node" for content type questions.
+
+    Returns information about:
+    - Bundles (e.g., content types for nodes, vocabularies for taxonomy)
+    - Fields for each bundle (name, type, required/optional)
+    - View displays and their configurations
+    - Form displays and their widget configurations
+    - Entity type definition (via drush if available)
+
+    Saves significant tokens by combining what would require multiple commands:
+    - drush ev for entity type info
+    - grep for field configs
+    - grep for view/form displays
+    - Multiple file searches
+
+    Args:
+        entity_type: Machine name of entity type
+                    - "node" for content types
+                    - "user" for user profiles
+                    - "taxonomy_term" for vocabularies
+                    - "media" for media types
+                    - "paragraph" for paragraph types
+
+    Returns:
+        Structured information about entity bundles, fields, and displays
+    """
+    ensure_indexed()
+
+    logger.info(f"Getting entity structure for: {entity_type}")
+
+    drupal_root = Path(config.get("drupal_root"))
+
+    # Try to get entity info from drush first (most accurate)
+    entity_info = _get_entity_info_from_drush(entity_type)
+
+    # Get field configs from files
+    field_configs = _get_field_configs(entity_type, drupal_root)
+
+    # Get view display configs
+    view_displays = _get_display_configs(entity_type, "view", drupal_root)
+
+    # Get form display configs
+    form_displays = _get_display_configs(entity_type, "form", drupal_root)
+
+    # Format output
+    output = [f"📦 **Entity Structure: `{entity_type}`**\n"]
+
+    # Entity type info (if available from drush)
+    if entity_info:
+        output.append("## Entity Type Information\n")
+        output.append(f"**Label:** {entity_info.get('label', 'N/A')}")
+        output.append(f"**Provider:** {entity_info.get('provider', 'N/A')}")
+        output.append(f"**Bundles:** {', '.join(entity_info.get('bundles', []))}\n")
+
+    # Field information
+    if field_configs:
+        output.append(f"## Fields ({len(field_configs)})\n")
+
+        # Group by bundle
+        bundles = {}
+        for field in field_configs:
+            bundle = field['bundle']
+            if bundle not in bundles:
+                bundles[bundle] = []
+            bundles[bundle].append(field)
+
+        for bundle, fields in bundles.items():
+            output.append(f"### Bundle: `{bundle}` ({len(fields)} fields)\n")
+            for field in fields[:15]:  # Limit to avoid token overload
+                field_name = field['field_name']
+                field_type = field.get('type', 'unknown')
+                required = "required" if field.get('required') else "optional"
+                output.append(f"- **`{field_name}`** ({field_type}, {required})")
+
+            if len(fields) > 15:
+                output.append(f"  *... and {len(fields) - 15} more fields*")
+            output.append("")
+    else:
+        output.append("## Fields\n")
+        output.append("❌ No field configurations found\n")
+
+    # View displays
+    if view_displays:
+        output.append(f"## View Displays ({len(view_displays)})\n")
+        for display in view_displays[:10]:
+            output.append(f"- **`{display['bundle']}.{display['mode']}`**")
+            if display.get('fields'):
+                output.append(f"  Fields: {', '.join(display['fields'][:5])}")
+        if len(view_displays) > 10:
+            output.append(f"*... and {len(view_displays) - 10} more displays*\n")
+
+    # Form displays
+    if form_displays:
+        output.append(f"\n## Form Displays ({len(form_displays)})\n")
+        for display in form_displays[:10]:
+            output.append(f"- **`{display['bundle']}.{display['mode']}`**")
+            if display.get('widgets'):
+                output.append(f"  Widgets: {', '.join(display['widgets'][:5])}")
+        if len(form_displays) > 10:
+            output.append(f"*... and {len(form_displays) - 10} more displays*")
+
+    if not field_configs and not view_displays and not form_displays:
+        output.append("\n⚠️  **No configuration found for this entity type**\n")
+        output.append("**Possible reasons:**")
+        output.append("• Entity type doesn't exist")
+        output.append("• Configs not exported to config/sync")
+        output.append("• Entity type name might be incorrect")
+
+    return "\n".join(output)
+
+
+def _get_entity_info_from_drush(entity_type: str) -> Optional[dict]:
+    """Get entity type info using drush eval."""
+    try:
+        # Try to get entity definition via drush
+        php_code = f"""
+        $entity_type_manager = \\Drupal::entityTypeManager();
+        $definition = $entity_type_manager->getDefinition('{entity_type}');
+        echo json_encode([
+            'label' => $definition->getLabel()->__toString(),
+            'provider' => $definition->getProvider(),
+            'bundles' => array_keys(\\Drupal::service('entity_type.bundle.info')->getBundleInfo('{entity_type}'))
+        ]);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=10)
+        return result
+    except Exception as e:
+        logger.debug(f"Could not get entity info from drush: {e}")
+        return None
+
+
+def _get_field_configs(entity_type: str, drupal_root: Path) -> List[dict]:
+    """
+    Get field configurations for an entity type.
+
+    Tries drush first (most accurate - active config from DB),
+    falls back to file parsing if drush unavailable.
+    """
+    fields = []
+
+    # Try drush first - gets active config from database
+    drush_fields = _get_field_configs_from_drush(entity_type)
+    if drush_fields:
+        return drush_fields
+
+    # Fallback: Parse config files
+    logger.debug("Drush unavailable, falling back to file-based config parsing")
+
+    config_locations = [
+        drupal_root / "config" / "sync",           # Standard config sync
+        drupal_root / "config" / "default",        # Default config
+        drupal_root / "sites" / "default" / "config" / "sync",  # Sites-specific
+        drupal_root / "recipes",                   # Drupal CMS recipes
+    ]
+
+    # Look for field.field.{entity_type}.*.yml files
+    pattern = f"field.field.{entity_type}.*.yml"
+
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        # Use rglob to search recursively (for recipes structure)
+        for config_file in config_dir.rglob(pattern):
+            try:
+                import yaml
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                    if config:
+                        fields.append({
+                            'field_name': config.get('field_name'),
+                            'bundle': config.get('bundle'),
+                            'type': config.get('field_type'),
+                            'required': config.get('required', False),
+                            'label': config.get('label')
+                        })
+            except Exception as e:
+                logger.debug(f"Error parsing {config_file}: {e}")
+                continue
+
+    return fields
+
+
+def _get_field_configs_from_drush(entity_type: str) -> Optional[List[dict]]:
+    """Get active field configs from database via drush."""
+    try:
+        php_code = f"""
+        $fields = [];
+        $field_configs = \\Drupal::entityTypeManager()
+            ->getStorage('field_config')
+            ->loadByProperties(['entity_type' => '{entity_type}']);
+
+        foreach ($field_configs as $field_config) {{
+            $fields[] = [
+                'field_name' => $field_config->getName(),
+                'bundle' => $field_config->getTargetBundle(),
+                'type' => $field_config->getType(),
+                'required' => $field_config->isRequired(),
+                'label' => $field_config->getLabel()
+            ];
+        }}
+
+        echo json_encode($fields);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=15)
+
+        if result and isinstance(result, list):
+            return result
+
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get field configs from drush: {e}")
+        return None
+
+
+def _get_display_configs(entity_type: str, display_type: str, drupal_root: Path) -> List[dict]:
+    """
+    Get display configurations for an entity type.
+
+    Tries drush first (active config from DB),
+    falls back to file parsing if drush unavailable.
+
+    Args:
+        entity_type: Entity type machine name
+        display_type: "view" or "form"
+        drupal_root: Drupal root path
+    """
+    displays = []
+
+    # Try drush first - gets active config from database
+    drush_displays = _get_display_configs_from_drush(entity_type, display_type)
+    if drush_displays:
+        return drush_displays
+
+    # Fallback: Parse config files
+    logger.debug("Drush unavailable, falling back to file-based display config parsing")
+
+    config_locations = [
+        drupal_root / "config" / "sync",
+        drupal_root / "config" / "default",
+        drupal_root / "sites" / "default" / "config" / "sync",
+        drupal_root / "recipes",
+    ]
+
+    # Look for core.entity_{view|form}_display.{entity_type}.*.yml
+    pattern = f"core.entity_{display_type}_display.{entity_type}.*.yml"
+
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        # Use rglob to search recursively
+        for config_file in config_dir.rglob(pattern):
+            try:
+                import yaml
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                    if config:
+                        # Extract bundle and mode from filename
+                        # e.g., core.entity_view_display.node.article.default.yml
+                        parts = config_file.stem.split('.')
+                        bundle = parts[2] if len(parts) > 2 else 'unknown'
+                        mode = parts[3] if len(parts) > 3 else 'default'
+
+                        display_info = {
+                            'bundle': bundle,
+                            'mode': mode
+                        }
+
+                        # Extract field list
+                        content = config.get('content', {})
+                        if display_type == 'view':
+                            display_info['fields'] = list(content.keys())
+                        else:  # form
+                            display_info['widgets'] = list(content.keys())
+
+                        displays.append(display_info)
+            except Exception as e:
+                logger.debug(f"Error parsing {config_file}: {e}")
+                continue
+
+    return displays
+
+
+def _get_display_configs_from_drush(entity_type: str, display_type: str) -> Optional[List[dict]]:
+    """Get active display configs from database via drush."""
+    try:
+        storage_type = f"entity_{display_type}_display"
+        php_code = f"""
+        $displays = [];
+        $display_configs = \\Drupal::entityTypeManager()
+            ->getStorage('{storage_type}')
+            ->loadByProperties(['targetEntityType' => '{entity_type}']);
+
+        foreach ($display_configs as $display) {{
+            $content = $display->get('content');
+            $displays[] = [
+                'bundle' => $display->getTargetBundle(),
+                'mode' => $display->getMode(),
+                '{"fields" if display_type == "view" else "widgets"}' => array_keys($content)
+            ];
+        }}
+
+        echo json_encode($displays);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=15)
+
+        if result and isinstance(result, list):
+            return result
+
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get display configs from drush: {e}")
+        return None
+
+
+@mcp.tool()
+def get_views_summary(view_name: Optional[str] = None, entity_type: Optional[str] = None) -> str:
+    """
+    Get summary of Drupal Views configurations with optional filtering.
+
+    **USE THIS TOOL** for questions about existing views, data displays, or before creating new views.
+
+    This tool answers questions like:
+    - "What views exist in the site?"
+    - "Show me the displays for the content view"
+    - "What filters are configured in views?"
+    - "Are there any views showing articles?" → Use entity_type="node"
+    - "Do we have any user views?" → Use entity_type="users"
+    - "Are there views for schools?" → Use entity_type="node" (schools are content)
+    - "Show me taxonomy term views" → Use entity_type="taxonomy_term"
+
+    Provides:
+    - View names and labels
+    - Display types (page, block, feed, etc.)
+    - Display paths and settings
+    - Filters and relationships
+    - Fields being displayed
+
+    Uses drush-first approach to get active views from database,
+    falls back to parsing views.view.*.yml config files.
+
+    Saves ~700-900 tokens vs running multiple drush/grep commands.
+
+    Args:
+        view_name: Optional. Specific view machine name to get details for.
+                   If omitted, returns summary of all views.
+        entity_type: Optional. Filter views by entity type/base table.
+                     Common values: "node", "users", "taxonomy_term", "media", "comment"
+                     Also accepts base table names: "node_field_data", "users_field_data"
+
+    Returns:
+        Formatted summary of views configurations
+    """
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ Error: Drupal root not found. Check drupal_root in config."
+
+        # Get views data (drush first, then file fallback)
+        views_data = _get_views_data(view_name, drupal_root)
+
+        if not views_data:
+            if view_name:
+                return f"❌ No view found with name '{view_name}'"
+            return "ℹ️ No views found in this Drupal installation"
+
+        # Filter by entity_type if provided
+        if entity_type:
+            views_data = _filter_views_by_entity_type(views_data, entity_type)
+
+            if not views_data:
+                return f"ℹ️ No views found for entity type '{entity_type}'"
+
+        # Format output
+        output = []
+
+        if view_name:
+            # Single view detailed output
+            view = views_data[0]
+            output.append(f"📊 View: {view['label']} ({view['id']})")
+            output.append(f"   Status: {'✅ Enabled' if view.get('status') else '❌ Disabled'}")
+            output.append(f"   Base Table: {view.get('base_table', 'Unknown')}")
+            output.append(f"   Description: {view.get('description', 'No description')}")
+            output.append("")
+
+            displays = view.get('displays', [])
+            if displays:
+                output.append(f"   Displays ({len(displays)}):")
+                for display in displays:
+                    output.append(f"   • {display['display_title']} [{display['display_plugin']}]")
+                    if display.get('path'):
+                        output.append(f"     Path: {display['path']}")
+                    if display.get('filters'):
+                        output.append(f"     Filters: {', '.join(display['filters'])}")
+                    if display.get('fields'):
+                        output.append(f"     Fields: {', '.join(display['fields'][:5])}{'...' if len(display['fields']) > 5 else ''}")
+                    if display.get('relationships'):
+                        output.append(f"     Relationships: {', '.join(display['relationships'])}")
+                    output.append("")
+        else:
+            # Multiple views summary
+            header = f"📊 Views Summary ({len(views_data)} views found)"
+            if entity_type:
+                header += f" - Showing '{entity_type}' views only"
+            output.append(header + "\n")
+
+            for view in views_data:
+                status_icon = "✅" if view.get('status') else "❌"
+                output.append(f"{status_icon} {view['label']} ({view['id']})")
+
+                displays = view.get('displays', [])
+                if displays:
+                    display_types = [d['display_plugin'] for d in displays]
+                    output.append(f"   Displays: {', '.join(display_types)}")
+
+                # Show base table for context
+                base_table = view.get('base_table', '')
+                if base_table:
+                    output.append(f"   Base: {base_table}")
+
+                output.append("")
+
+        result = "\n".join(output)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting views summary: {e}")
+        return f"❌ Error: {str(e)}"
+
+
+def _filter_views_by_entity_type(views_data: List[dict], entity_type: str) -> List[dict]:
+    """
+    Filter views by entity type or base table.
+
+    Handles common entity type mappings:
+    - "node" → "node", "node_field_data"
+    - "users" → "users", "users_field_data"
+    - "taxonomy_term" → "taxonomy_term_data", "taxonomy_term_field_data"
+    - "media" → "media", "media_field_data"
+    - "comment" → "comment", "comment_field_data"
+
+    Args:
+        views_data: List of view data dictionaries
+        entity_type: Entity type or base table name to filter by
+
+    Returns:
+        Filtered list of views
+    """
+    # Map entity types to possible base table names
+    entity_type_mappings = {
+        'node': ['node', 'node_field_data', 'node_revision'],
+        'users': ['users', 'users_field_data'],
+        'user': ['users', 'users_field_data'],  # Accept both singular/plural
+        'taxonomy_term': ['taxonomy_term_data', 'taxonomy_term_field_data'],
+        'media': ['media', 'media_field_data'],
+        'comment': ['comment', 'comment_field_data'],
+        'file': ['file_managed'],
+        'block_content': ['block_content', 'block_content_field_data'],
+    }
+
+    # Get possible base tables for this entity type
+    possible_tables = entity_type_mappings.get(entity_type.lower(), [entity_type])
+
+    # Filter views
+    filtered = []
+    for view in views_data:
+        base_table = view.get('base_table', '').lower()
+
+        # Check if base table matches any of the possible tables
+        if any(table in base_table for table in possible_tables):
+            filtered.append(view)
+
+    return filtered
+
+
+def _get_views_data(view_name: Optional[str], drupal_root: Path) -> List[dict]:
+    """
+    Get views data using drush-first, file-fallback approach.
+
+    Args:
+        view_name: Optional specific view machine name
+        drupal_root: Path to Drupal root
+
+    Returns:
+        List of view data dictionaries
+    """
+    # Try drush first - gets active config from database
+    drush_views = _get_views_from_drush(view_name)
+    if drush_views:
+        logger.debug(f"Retrieved {len(drush_views)} views from drush")
+        return drush_views
+
+    # Fallback: Parse config files
+    logger.debug("Drush unavailable, falling back to file-based views config parsing")
+    return _get_views_from_files(view_name, drupal_root)
+
+
+def _get_views_from_drush(view_name: Optional[str]) -> Optional[List[dict]]:
+    """Get active views configs from database via drush."""
+    try:
+        # Build filter condition
+        filter_condition = ""
+        if view_name:
+            filter_condition = f"if ($view->id() != '{view_name}') continue;"
+
+        php_code = f"""
+        $views_data = [];
+        $view_storage = \\Drupal::entityTypeManager()->getStorage('view');
+
+        $views = $view_storage->loadMultiple();
+
+        foreach ($views as $view) {{
+            {filter_condition}
+
+            $view_config = [
+                'id' => $view->id(),
+                'label' => $view->label(),
+                'status' => $view->status(),
+                'description' => $view->get('description'),
+                'base_table' => $view->get('base_table'),
+                'displays' => []
+            ];
+
+            $displays = $view->get('display');
+            foreach ($displays as $display_id => $display_config) {{
+                $display_info = [
+                    'id' => $display_id,
+                    'display_plugin' => $display_config['display_plugin'] ?? 'unknown',
+                    'display_title' => $display_config['display_title'] ?? $display_id,
+                    'path' => $display_config['display_options']['path'] ?? null,
+                    'filters' => [],
+                    'fields' => [],
+                    'relationships' => []
+                ];
+
+                // Get filters
+                if (isset($display_config['display_options']['filters'])) {{
+                    $display_info['filters'] = array_keys($display_config['display_options']['filters']);
+                }}
+
+                // Get fields
+                if (isset($display_config['display_options']['fields'])) {{
+                    $display_info['fields'] = array_keys($display_config['display_options']['fields']);
+                }}
+
+                // Get relationships
+                if (isset($display_config['display_options']['relationships'])) {{
+                    $display_info['relationships'] = array_keys($display_config['display_options']['relationships']);
+                }}
+
+                $view_config['displays'][] = $display_info;
+            }}
+
+            $views_data[] = $view_config;
+        }}
+
+        echo json_encode($views_data);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=20)
+
+        if result and isinstance(result, list):
+            return result
+
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get views from drush: {e}")
+        return None
+
+
+def _get_views_from_files(view_name: Optional[str], drupal_root: Path) -> List[dict]:
+    """Parse views from config files as fallback."""
+    views_data = []
+
+    config_locations = [
+        drupal_root / "config" / "sync",
+        drupal_root / "config" / "default",
+        drupal_root / "sites" / "default" / "config" / "sync",
+        drupal_root / "recipes",
+    ]
+
+    # Look for views.view.*.yml files
+    pattern = "views.view.*.yml" if not view_name else f"views.view.{view_name}.yml"
+
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        for config_file in config_dir.rglob(pattern):
+            try:
+                import yaml
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                if not config:
+                    continue
+
+                view_config = {
+                    'id': config.get('id', 'unknown'),
+                    'label': config.get('label', 'Unknown'),
+                    'status': config.get('status', False),
+                    'description': config.get('description', ''),
+                    'base_table': config.get('base_table', ''),
+                    'displays': []
+                }
+
+                # Parse displays
+                displays = config.get('display', {})
+                for display_id, display_data in displays.items():
+                    display_info = {
+                        'id': display_id,
+                        'display_plugin': display_data.get('display_plugin', 'unknown'),
+                        'display_title': display_data.get('display_title', display_id),
+                        'path': None,
+                        'filters': [],
+                        'fields': [],
+                        'relationships': []
+                    }
+
+                    display_options = display_data.get('display_options', {})
+
+                    # Get path
+                    if 'path' in display_options:
+                        display_info['path'] = display_options['path']
+
+                    # Get filters
+                    if 'filters' in display_options:
+                        display_info['filters'] = list(display_options['filters'].keys())
+
+                    # Get fields
+                    if 'fields' in display_options:
+                        display_info['fields'] = list(display_options['fields'].keys())
+
+                    # Get relationships
+                    if 'relationships' in display_options:
+                        display_info['relationships'] = list(display_options['relationships'].keys())
+
+                    view_config['displays'].append(display_info)
+
+                views_data.append(view_config)
+
+            except Exception as e:
+                logger.debug(f"Error parsing {config_file}: {e}")
+                continue
+
+    return views_data
+
+
+@mcp.tool()
+def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] = None) -> str:
+    """
+    Get comprehensive information about Drupal fields.
+
+    **USE THIS TOOL** for questions about fields, where they're used, field types, and data structure.
+
+    This tool answers questions like:
+    - "What fields exist in the site?"
+    - "Where is the field_image field used?"
+    - "What type of field is field_phone_number?"
+    - "What fields does the article content type have?"
+    - "Do we have a field for storing addresses?"
+    - "Show me all email fields"
+    - "What content types use field_category?"
+
+    Provides:
+    - Field machine names and labels
+    - Field types (text, entity_reference, image, etc.)
+    - Where fields are used (entity types and bundles)
+    - Field settings (required, cardinality, max length, etc.)
+    - Storage details (single/multi-value)
+
+    Uses drush-first approach to get active field configs from database,
+    falls back to parsing field.field.*.yml and field.storage.*.yml files.
+
+    Saves ~800-1000 tokens vs running multiple drush field commands + greps.
+
+    Args:
+        field_name: Optional. Specific field machine name (e.g., "field_image").
+                    If omitted, returns summary of all fields.
+                    Supports partial matching (e.g., "email" finds field_email, field_user_email)
+        entity_type: Optional. Filter fields by entity type.
+                     Common values: "node", "user", "taxonomy_term", "media"
+                     Example: entity_type="node" shows only node fields
+
+    Returns:
+        Formatted field information with usage details
+    """
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ Error: Drupal root not found. Check drupal_root in config."
+
+        # Get field data (drush first, then file fallback)
+        fields_data = _get_fields_data(field_name, entity_type, drupal_root)
+
+        if not fields_data:
+            if field_name:
+                return f"ℹ️ No fields found matching '{field_name}'"
+            if entity_type:
+                return f"ℹ️ No fields found for entity type '{entity_type}'"
+            return "ℹ️ No fields found in this Drupal installation"
+
+        # Format output
+        output = []
+
+        if field_name and len(fields_data) == 1:
+            # Single field detailed output
+            field = fields_data[0]
+            output.append(f"🔧 Field: {field.get('label', 'Unknown')} ({field['field_name']})")
+            output.append(f"   Type: {field.get('field_type', 'Unknown')}")
+            output.append(f"   Entity Type: {field.get('entity_type', 'Unknown')}")
+
+            # Storage info
+            cardinality = field.get('cardinality', 1)
+            if cardinality == -1:
+                output.append(f"   Storage: Unlimited values")
+            elif cardinality == 1:
+                output.append(f"   Storage: Single value")
+            else:
+                output.append(f"   Storage: Up to {cardinality} values")
+
+            # Settings
+            settings_parts = []
+            if field.get('required'):
+                settings_parts.append("Required")
+            if field.get('translatable'):
+                settings_parts.append("Translatable")
+
+            max_length = field.get('max_length')
+            if max_length:
+                settings_parts.append(f"Max length: {max_length}")
+
+            target_type = field.get('target_type')
+            if target_type:
+                settings_parts.append(f"References: {target_type}")
+
+            if settings_parts:
+                output.append(f"   Settings: {', '.join(settings_parts)}")
+
+            # Usage across bundles
+            bundles = field.get('bundles', [])
+            if bundles:
+                output.append(f"\n   Used in {len(bundles)} bundle(s):")
+                for bundle in bundles:
+                    bundle_label = bundle.get('bundle_label', bundle.get('bundle', 'Unknown'))
+                    req_indicator = " (required)" if bundle.get('required') else ""
+                    output.append(f"   • {bundle_label}{req_indicator}")
+
+            # Description if available
+            description = field.get('description')
+            if description:
+                output.append(f"\n   Description: {description}")
+
+        else:
+            # Multiple fields summary
+            header = f"🔧 Fields Summary ({len(fields_data)} fields found)"
+            if entity_type:
+                header += f" - Entity type: {entity_type}"
+            if field_name:
+                header += f" - Matching: {field_name}"
+            output.append(header + "\n")
+
+            # Group by entity type for better readability
+            by_entity_type = {}
+            for field in fields_data:
+                et = field.get('entity_type', 'unknown')
+                if et not in by_entity_type:
+                    by_entity_type[et] = []
+                by_entity_type[et].append(field)
+
+            for et, fields in sorted(by_entity_type.items()):
+                output.append(f"📦 {et.upper()}:")
+                for field in sorted(fields, key=lambda f: f['field_name']):
+                    bundles = field.get('bundles', [])
+                    bundle_names = [b.get('bundle', '') for b in bundles]
+                    bundles_str = ', '.join(bundle_names[:3])
+                    if len(bundle_names) > 3:
+                        bundles_str += f" (+{len(bundle_names) - 3} more)"
+
+                    field_label = field.get('label', field['field_name'])
+                    field_type = field.get('field_type', 'unknown')
+
+                    output.append(f"   • {field_label} ({field['field_name']})")
+                    output.append(f"     Type: {field_type} | Bundles: {bundles_str}")
+                output.append("")
+
+        result = "\n".join(output)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error getting field info: {e}")
+        return f"❌ Error: {str(e)}"
+
+
+def _get_fields_data(field_name: Optional[str], entity_type: Optional[str], drupal_root: Path) -> List[dict]:
+    """
+    Get fields data using drush-first, file-fallback approach.
+
+    Args:
+        field_name: Optional field name (supports partial matching)
+        entity_type: Optional entity type filter
+        drupal_root: Path to Drupal root
+
+    Returns:
+        List of field data dictionaries
+    """
+    # Try drush first - gets active config from database
+    drush_fields = _get_fields_from_drush(field_name, entity_type)
+    if drush_fields:
+        logger.debug(f"Retrieved {len(drush_fields)} fields from drush")
+        return drush_fields
+
+    # Fallback: Parse config files
+    logger.debug("Drush unavailable, falling back to file-based field config parsing")
+    return _get_fields_from_files(field_name, entity_type, drupal_root)
+
+
+def _get_fields_from_drush(field_name: Optional[str], entity_type: Optional[str]) -> Optional[List[dict]]:
+    """Get active field configs from database via drush."""
+    try:
+        # Build filters
+        entity_filter = ""
+        if entity_type:
+            entity_filter = f"if ($field_config->getTargetEntityTypeId() != '{entity_type}') continue;"
+
+        field_filter = ""
+        if field_name:
+            # Support partial matching
+            field_filter = f"if (strpos($field_config->getName(), '{field_name}') === false) continue;"
+
+        php_code = f"""
+        $fields_data = [];
+
+        // Get field storage configs for type and cardinality info
+        $field_storages = \\Drupal::entityTypeManager()
+            ->getStorage('field_storage_config')
+            ->loadMultiple();
+
+        $storage_info = [];
+        foreach ($field_storages as $storage) {{
+            $storage_info[$storage->getTargetEntityTypeId()][$storage->getName()] = [
+                'field_type' => $storage->getType(),
+                'cardinality' => $storage->getCardinality(),
+                'settings' => $storage->getSettings(),
+            ];
+        }}
+
+        // Get field configs for usage and settings
+        $field_configs = \\Drupal::entityTypeManager()
+            ->getStorage('field_config')
+            ->loadMultiple();
+
+        foreach ($field_configs as $field_config) {{
+            {entity_filter}
+            {field_filter}
+
+            $entity_type_id = $field_config->getTargetEntityTypeId();
+            $field_name = $field_config->getName();
+
+            // Get storage info
+            $storage = $storage_info[$entity_type_id][$field_name] ?? null;
+
+            // Create or find existing field entry
+            $field_key = $entity_type_id . '.' . $field_name;
+
+            if (!isset($fields_data[$field_key])) {{
+                $settings = $field_config->getSettings();
+                $field_entry = [
+                    'field_name' => $field_name,
+                    'entity_type' => $entity_type_id,
+                    'label' => $field_config->getLabel(),
+                    'description' => $field_config->getDescription(),
+                    'field_type' => $storage['field_type'] ?? 'unknown',
+                    'cardinality' => $storage['cardinality'] ?? 1,
+                    'translatable' => $field_config->isTranslatable(),
+                    'bundles' => []
+                ];
+
+                // Add type-specific settings
+                if (isset($settings['max_length'])) {{
+                    $field_entry['max_length'] = $settings['max_length'];
+                }}
+                if (isset($settings['target_type'])) {{
+                    $field_entry['target_type'] = $settings['target_type'];
+                }}
+
+                $fields_data[$field_key] = $field_entry;
+            }}
+
+            // Add bundle info
+            $bundle = $field_config->getTargetBundle();
+            $bundle_entity_type = \\Drupal::entityTypeManager()->getDefinition($entity_type_id);
+            $bundle_entity_type_id = $bundle_entity_type->getBundleEntityType();
+
+            $bundle_label = $bundle;
+            if ($bundle_entity_type_id) {{
+                $bundle_entity = \\Drupal::entityTypeManager()
+                    ->getStorage($bundle_entity_type_id)
+                    ->load($bundle);
+                if ($bundle_entity) {{
+                    $bundle_label = $bundle_entity->label();
+                }}
+            }}
+
+            $fields_data[$field_key]['bundles'][] = [
+                'bundle' => $bundle,
+                'bundle_label' => $bundle_label,
+                'required' => $field_config->isRequired()
+            ];
+        }}
+
+        echo json_encode(array_values($fields_data));
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=25)
+
+        if result and isinstance(result, list):
+            return result
+
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get fields from drush: {e}")
+        return None
+
+
+def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str], drupal_root: Path) -> List[dict]:
+    """Parse field configs from files as fallback."""
+    fields_data = {}
+
+    config_locations = [
+        drupal_root / "config" / "sync",
+        drupal_root / "config" / "default",
+        drupal_root / "sites" / "default" / "config" / "sync",
+        drupal_root / "recipes",
+    ]
+
+    # First, get field storage configs for type info
+    storage_info = {}
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        for storage_file in config_dir.rglob("field.storage.*.yml"):
+            try:
+                import yaml
+                with open(storage_file, 'r') as f:
+                    storage_config = yaml.safe_load(f)
+
+                if not storage_config:
+                    continue
+
+                entity_type_id = storage_config.get('entity_type', '')
+                field_name_storage = storage_config.get('field_name', '')
+
+                if entity_type_id and field_name_storage:
+                    key = f"{entity_type_id}.{field_name_storage}"
+                    storage_info[key] = {
+                        'field_type': storage_config.get('type', 'unknown'),
+                        'cardinality': storage_config.get('cardinality', 1),
+                        'settings': storage_config.get('settings', {})
+                    }
+            except Exception as e:
+                logger.debug(f"Error parsing {storage_file}: {e}")
+                continue
+
+    # Now get field instance configs
+    pattern = "field.field.*.yml"
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        for config_file in config_dir.rglob(pattern):
+            try:
+                import yaml
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                if not config:
+                    continue
+
+                entity_type_id = config.get('entity_type', '')
+                field_name_config = config.get('field_name', '')
+                bundle = config.get('bundle', '')
+
+                # Apply filters
+                if entity_type and entity_type_id != entity_type:
+                    continue
+
+                if field_name and field_name not in field_name_config:
+                    continue
+
+                # Get storage info
+                storage_key = f"{entity_type_id}.{field_name_config}"
+                storage = storage_info.get(storage_key, {})
+
+                # Create or update field entry
+                if storage_key not in fields_data:
+                    settings = config.get('settings', {})
+                    field_entry = {
+                        'field_name': field_name_config,
+                        'entity_type': entity_type_id,
+                        'label': config.get('label', field_name_config),
+                        'description': config.get('description', ''),
+                        'field_type': storage.get('field_type', 'unknown'),
+                        'cardinality': storage.get('cardinality', 1),
+                        'translatable': config.get('translatable', False),
+                        'bundles': []
+                    }
+
+                    # Add type-specific settings
+                    if 'max_length' in settings:
+                        field_entry['max_length'] = settings['max_length']
+                    if 'target_type' in settings:
+                        field_entry['target_type'] = settings['target_type']
+
+                    fields_data[storage_key] = field_entry
+
+                # Add bundle info
+                fields_data[storage_key]['bundles'].append({
+                    'bundle': bundle,
+                    'bundle_label': bundle,
+                    'required': config.get('required', False)
+                })
+
+            except Exception as e:
+                logger.debug(f"Error parsing {config_file}: {e}")
+                continue
+
+    return list(fields_data.values())
+
+
+@mcp.tool()
+def get_taxonomy_info(vocabulary: Optional[str] = None, term_name: Optional[str] = None, term_id: Optional[int] = None) -> str:
+    """
+    Get comprehensive information about Drupal taxonomies, vocabularies, and terms.
+
+    **USE THIS TOOL** before deleting, renaming, or modifying taxonomy terms/vocabularies.
+
+    This tool answers questions like:
+    - "What taxonomy vocabularies exist?"
+    - "Show me all terms in the categories vocabulary"
+    - "Where is the 'Technology' term used?" → Use term_name="Technology"
+    - "Can I safely delete the 'Old Category' term?" → Use term_name="Old Category"
+    - "Where is the Drupal term being used?" → Use term_name="Drupal", vocabulary="tags"
+    - "What content uses terms from the tags vocabulary?"
+    - "Show me the hierarchy of the main menu vocabulary"
+    - "Which fields reference the categories vocabulary?"
+
+    IMPORTANT: To find where a specific term is used:
+    1. Use term_name parameter: get_taxonomy_info(term_name="Drupal", vocabulary="tags")
+    2. If only one match, automatically shows detailed usage analysis
+    3. If multiple matches, shows list with term IDs to choose from
+
+    DO NOT try to find term IDs manually - use term_name parameter!
+
+    Provides:
+    - Vocabulary list with term counts
+    - Term hierarchies (parent/child relationships)
+    - Term usage in content (which nodes reference each term)
+    - Term usage in views (filters, contextual filters, relationships)
+    - Fields that reference each vocabulary
+    - Safe-to-delete analysis for terms
+    - Term metadata (name, description, weight, parent)
+
+    Uses drush-first approach to get active taxonomy data from database,
+    falls back to parsing taxonomy config files and searching codebase.
+
+    Saves ~1000-1500 tokens vs running multiple taxonomy commands + content queries.
+
+    Args:
+        vocabulary: Optional. Vocabulary machine name (e.g., "tags", "categories").
+                    If omitted, returns list of all vocabularies.
+        term_name: Optional. Search for specific term by name (partial matching).
+                   Example: "tech" finds "Technology", "Tech News", etc.
+        term_id: Optional. Specific term ID (tid) to get detailed usage info.
+                 Use this to see where a specific term is used before deleting.
+
+    Returns:
+        Formatted taxonomy information with usage analysis
+    """
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ Error: Drupal root not found. Check drupal_root in config."
+
+        # Get taxonomy data (drush first, then file fallback)
+        if term_id:
+            # Detailed term usage analysis
+            return _get_term_usage_analysis(term_id, drupal_root)
+        elif term_name:
+            # Search for terms by name
+            return _search_terms_by_name(term_name, vocabulary, drupal_root)
+        elif vocabulary:
+            # Show all terms in a vocabulary
+            return _get_vocabulary_terms(vocabulary, drupal_root)
+        else:
+            # List all vocabularies
+            return _get_vocabularies_summary(drupal_root)
+
+    except Exception as e:
+        logger.error(f"Error getting taxonomy info: {e}")
+        return f"❌ Error: {str(e)}"
+
+
+def _get_vocabularies_summary(drupal_root: Path) -> str:
+    """Get summary of all vocabularies."""
+    vocabs_data = _get_vocabularies_from_drush()
+
+    if not vocabs_data:
+        # Fallback to file parsing
+        vocabs_data = _get_vocabularies_from_files(drupal_root)
+
+    if not vocabs_data:
+        return "ℹ️ No taxonomy vocabularies found"
+
+    output = [f"📚 Taxonomy Vocabularies ({len(vocabs_data)} found)\n"]
+
+    for vocab in vocabs_data:
+        output.append(f"• {vocab['label']} ({vocab['id']})")
+        if vocab.get('description'):
+            output.append(f"  Description: {vocab['description']}")
+
+        term_count = vocab.get('term_count', 0)
+        output.append(f"  Terms: {term_count}")
+
+        # Show which fields reference this vocabulary
+        fields = vocab.get('referencing_fields', [])
+        if fields:
+            field_summary = ', '.join(fields[:3])
+            if len(fields) > 3:
+                field_summary += f" (+{len(fields) - 3} more)"
+            output.append(f"  Used by fields: {field_summary}")
+
+        output.append("")
+
+    return "\n".join(output)
+
+
+def _get_vocabulary_terms(vocabulary: str, drupal_root: Path) -> str:
+    """Get all terms in a vocabulary with hierarchy."""
+    terms_data = _get_terms_from_drush(vocabulary)
+
+    if not terms_data:
+        # Fallback to file parsing
+        terms_data = _get_terms_from_files(vocabulary, drupal_root)
+
+    if not terms_data:
+        return f"ℹ️ No terms found in vocabulary '{vocabulary}'"
+
+    vocab_info = terms_data.get('vocabulary', {})
+    terms = terms_data.get('terms', [])
+
+    output = [f"📚 Vocabulary: {vocab_info.get('label', vocabulary)} ({vocabulary})"]
+    if vocab_info.get('description'):
+        output.append(f"   Description: {vocab_info['description']}")
+    output.append(f"   Total terms: {len(terms)}\n")
+
+    # Build hierarchy
+    hierarchy = _build_term_hierarchy(terms)
+
+    output.append("📖 Terms:")
+    _append_term_tree(output, hierarchy, 0)
+
+    return "\n".join(output)
+
+
+def _search_terms_by_name(term_name: str, vocabulary: Optional[str], drupal_root: Path) -> str:
+    """Search for terms by name across vocabularies."""
+    results = _search_terms_from_drush(term_name, vocabulary)
+
+    if not results:
+        results = _search_terms_from_files(term_name, vocabulary, drupal_root)
+
+    if not results:
+        search_scope = f"in vocabulary '{vocabulary}'" if vocabulary else "across all vocabularies"
+        return f"ℹ️ No terms found matching '{term_name}' {search_scope}"
+
+    # If only one result, automatically show detailed usage analysis
+    if len(results) == 1:
+        logger.info(f"Single term found for '{term_name}', showing detailed usage analysis")
+        return _get_term_usage_analysis(results[0]['tid'], drupal_root)
+
+    # Multiple results - show summary with prominent term IDs
+    output = [f"🔍 Terms matching '{term_name}' ({len(results)} found)"]
+    output.append("💡 Tip: Use get_taxonomy_info(term_id=X) for detailed usage analysis\n")
+
+    for term in results:
+        output.append(f"• {term['name']} (tid: {term['tid']})")
+        output.append(f"  Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
+
+        if term.get('description'):
+            desc = term['description'][:100] + "..." if len(term['description']) > 100 else term['description']
+            output.append(f"  Description: {desc}")
+
+        usage_count = term.get('usage_count', 0)
+        if usage_count > 0:
+            output.append(f"  ⚠️  Used in {usage_count} content item(s)")
+        else:
+            output.append(f"  ✅ Not used (safe to delete)")
+
+        output.append("")
+
+    return "\n".join(output)
+
+
+def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
+    """Get detailed usage analysis for a specific term."""
+    usage_data = _get_term_usage_from_drush(term_id)
+
+    if not usage_data:
+        usage_data = _get_term_usage_from_files(term_id, drupal_root)
+
+    if not usage_data:
+        return f"ℹ️ Term {term_id} not found"
+
+    term = usage_data['term']
+    output = [f"🏷️  Term: {term['name']} (tid: {term_id})"]
+    output.append(f"   Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
+
+    if term.get('description'):
+        output.append(f"   Description: {term['description']}")
+
+    if term.get('parent'):
+        output.append(f"   Parent: {term['parent']}")
+
+    children = term.get('children', [])
+    if children:
+        output.append(f"   Children: {', '.join(children)}")
+
+    output.append("")
+
+    # Content usage
+    content_usage = usage_data.get('content_usage', [])
+    if content_usage:
+        output.append(f"📄 Used in {len(content_usage)} content item(s):")
+        for item in content_usage[:10]:  # Show first 10
+            output.append(f"   • {item['title']} ({item['type']}) - nid: {item['nid']}")
+        if len(content_usage) > 10:
+            output.append(f"   ... and {len(content_usage) - 10} more")
+        output.append("")
+
+    # Views usage
+    views_usage = usage_data.get('views_usage', [])
+    if views_usage:
+        output.append(f"👁️  Used in {len(views_usage)} view(s):")
+        for view in views_usage:
+            output.append(f"   • {view['view_label']} ({view['view_id']}) - {view['usage_type']}")
+        output.append("")
+
+    # Fields that could reference this term
+    fields = usage_data.get('referencing_fields', [])
+    if fields:
+        output.append(f"🔗 Vocabulary referenced by {len(fields)} field(s):")
+        for field in fields:
+            output.append(f"   • {field['field_label']} ({field['field_name']}) on {', '.join(field['bundles'])}")
+        output.append("")
+
+    # Safety assessment
+    total_usage = len(content_usage) + len(views_usage)
+    if total_usage == 0 and not children:
+        output.append("✅ SAFE TO DELETE")
+        output.append("   This term is not used in content, views, or as a parent term.")
+    elif children:
+        output.append("⚠️  WARNING: Has child terms")
+        output.append(f"   {len(children)} child term(s) will become orphaned if deleted.")
+        output.append("   Consider reassigning children or deleting them first.")
+    else:
+        output.append("⚠️  CAUTION: Term is in use")
+        output.append(f"   Used in {len(content_usage)} content item(s) and {len(views_usage)} view(s).")
+        output.append("   Deleting will remove term references from content.")
+        output.append("   Consider merging with another term instead.")
+
+    return "\n".join(output)
+
+
+def _build_term_hierarchy(terms: List[dict]) -> List[dict]:
+    """Build hierarchical tree structure from flat term list."""
+    # Create lookup dict
+    terms_by_id = {t['tid']: {**t, 'children': []} for t in terms}
+
+    # Build tree
+    root_terms = []
+    for term in terms:
+        parent_id = term.get('parent_tid', 0)
+        if parent_id and parent_id in terms_by_id:
+            terms_by_id[parent_id]['children'].append(terms_by_id[term['tid']])
+        else:
+            root_terms.append(terms_by_id[term['tid']])
+
+    return root_terms
+
+
+def _append_term_tree(output: List[str], terms: List[dict], level: int):
+    """Recursively append term tree to output."""
+    indent = "   " * level
+    for term in terms:
+        usage = term.get('usage_count', 0)
+        usage_str = f" ({usage} uses)" if usage > 0 else ""
+        output.append(f"{indent}• {term['name']} (tid: {term['tid']}){usage_str}")
+
+        if term.get('children'):
+            _append_term_tree(output, term['children'], level + 1)
+
+
+def _get_vocabularies_from_drush() -> Optional[List[dict]]:
+    """Get vocabularies from database via drush."""
+    try:
+        php_code = """
+        $vocabs_data = [];
+        $vocab_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary');
+        $vocabularies = $vocab_storage->loadMultiple();
+
+        // Get term counts
+        $term_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_term');
+
+        // Get fields that reference taxonomies
+        $field_configs = \\Drupal::entityTypeManager()
+            ->getStorage('field_config')
+            ->loadMultiple();
+
+        $vocab_fields = [];
+        foreach ($field_configs as $field) {
+            $settings = $field->getSettings();
+            if (isset($settings['target_type']) && $settings['target_type'] === 'taxonomy_term') {
+                $handler_settings = $settings['handler_settings'] ?? [];
+                $target_bundles = $handler_settings['target_bundles'] ?? [];
+                foreach ($target_bundles as $vocab_id) {
+                    if (!isset($vocab_fields[$vocab_id])) {
+                        $vocab_fields[$vocab_id] = [];
+                    }
+                    $vocab_fields[$vocab_id][] = $field->getName();
+                }
+            }
+        }
+
+        foreach ($vocabularies as $vocab) {
+            $vocab_id = $vocab->id();
+
+            // Count terms
+            $term_count = $term_storage->getQuery()
+                ->condition('vid', $vocab_id)
+                ->accessCheck(FALSE)
+                ->count()
+                ->execute();
+
+            $vocabs_data[] = [
+                'id' => $vocab_id,
+                'label' => $vocab->label(),
+                'description' => $vocab->getDescription(),
+                'term_count' => (int)$term_count,
+                'referencing_fields' => $vocab_fields[$vocab_id] ?? []
+            ];
+        }
+
+        echo json_encode($vocabs_data);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=20)
+        return result if result and isinstance(result, list) else None
+
+    except Exception as e:
+        logger.debug(f"Could not get vocabularies from drush: {e}")
+        return None
+
+
+def _get_vocabularies_from_files(drupal_root: Path) -> List[dict]:
+    """Parse vocabulary configs from files."""
+    vocabs_data = []
+
+    config_locations = [
+        drupal_root / "config" / "sync",
+        drupal_root / "config" / "default",
+        drupal_root / "sites" / "default" / "config" / "sync",
+        drupal_root / "recipes",
+    ]
+
+    for config_dir in config_locations:
+        if not config_dir.exists():
+            continue
+
+        for vocab_file in config_dir.rglob("taxonomy.vocabulary.*.yml"):
+            try:
+                import yaml
+                with open(vocab_file, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                if config:
+                    vocabs_data.append({
+                        'id': config.get('vid', ''),
+                        'label': config.get('name', ''),
+                        'description': config.get('description', ''),
+                        'term_count': 0,  # Can't get from files
+                        'referencing_fields': []  # Would need to parse field configs
+                    })
+            except Exception as e:
+                logger.debug(f"Error parsing {vocab_file}: {e}")
+                continue
+
+    return vocabs_data
+
+
+def _get_terms_from_drush(vocabulary: str) -> Optional[dict]:
+    """Get terms from a vocabulary via drush."""
+    try:
+        php_code = f"""
+        $vocab_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary');
+        $vocab = $vocab_storage->load('{vocabulary}');
+
+        if (!$vocab) {{
+            echo json_encode(null);
+            exit;
+        }}
+
+        $term_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_term');
+        $terms = $term_storage->loadByProperties(['vid' => '{vocabulary}']);
+
+        // Get usage counts from entity_usage or count manually
+        $database = \\Drupal::database();
+
+        $terms_data = [];
+        foreach ($terms as $term) {{
+            $tid = $term->id();
+
+            // Count usage in node fields (simplified - checks common field tables)
+            $usage_count = 0;
+            try {{
+                // This is a simplified count - real implementation would check all entity reference fields
+                $usage_count = $database->select('node__field_tags', 'n')
+                    ->condition('field_tags_target_id', $tid)
+                    ->countQuery()
+                    ->execute()
+                    ->fetchField();
+            }} catch (\\Exception $e) {{
+                // Field doesn't exist
+            }}
+
+            $parent = $term_storage->loadParents($tid);
+            $parent_tid = $parent ? key($parent) : 0;
+
+            $terms_data[] = [
+                'tid' => (int)$tid,
+                'name' => $term->getName(),
+                'description' => $term->getDescription(),
+                'weight' => $term->getWeight(),
+                'parent_tid' => (int)$parent_tid,
+                'usage_count' => (int)$usage_count
+            ];
+        }}
+
+        $result = [
+            'vocabulary' => [
+                'id' => $vocab->id(),
+                'label' => $vocab->label(),
+                'description' => $vocab->getDescription()
+            ],
+            'terms' => $terms_data
+        ];
+
+        echo json_encode($result);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=25)
+        return result if result else None
+
+    except Exception as e:
+        logger.debug(f"Could not get terms from drush: {e}")
+        return None
+
+
+def _get_terms_from_files(vocabulary: str, drupal_root: Path) -> Optional[dict]:
+    """Parse terms from migration or content files (limited fallback)."""
+    # This is a limited fallback - terms are usually only in DB
+    # Could parse content files or migration configs if needed
+    return None
+
+
+def _search_terms_from_drush(term_name: str, vocabulary: Optional[str]) -> Optional[List[dict]]:
+    """Search for terms by name via drush."""
+    try:
+        vocab_filter = ""
+        if vocabulary:
+            vocab_filter = f"->condition('vid', '{vocabulary}')"
+
+        php_code = f"""
+        $term_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_term');
+        $vocab_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary');
+
+        $query = $term_storage->getQuery()
+            ->condition('name', '%{term_name}%', 'LIKE')
+            {vocab_filter}
+            ->accessCheck(FALSE)
+            ->range(0, 20);
+
+        $tids = $query->execute();
+        $terms = $term_storage->loadMultiple($tids);
+
+        $results = [];
+        foreach ($terms as $term) {{
+            $tid = $term->id();
+            $vid = $term->bundle();
+            $vocab = $vocab_storage->load($vid);
+
+            // Simple usage count (would need to check all reference fields in production)
+            $database = \\Drupal::database();
+            $usage_count = 0;
+
+            $results[] = [
+                'tid' => (int)$tid,
+                'name' => $term->getName(),
+                'description' => $term->getDescription(),
+                'vocabulary' => $vid,
+                'vocabulary_label' => $vocab ? $vocab->label() : $vid,
+                'usage_count' => $usage_count
+            ];
+        }}
+
+        echo json_encode($results);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=20)
+        return result if result and isinstance(result, list) else None
+
+    except Exception as e:
+        logger.debug(f"Could not search terms from drush: {e}")
+        return None
+
+
+def _search_terms_from_files(term_name: str, vocabulary: Optional[str], drupal_root: Path) -> List[dict]:
+    """Search terms in files (limited fallback)."""
+    return []
+
+
+def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
+    """Get detailed usage analysis for a term via drush."""
+    try:
+        php_code = f"""
+        $tid = {term_id};
+        $term_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_term');
+        $term = $term_storage->load($tid);
+
+        if (!$term) {{
+            echo json_encode(null);
+            exit;
+        }}
+
+        $vocab_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary');
+        $vocab = $vocab_storage->load($term->bundle());
+
+        // Get term info
+        $parents = $term_storage->loadParents($tid);
+        $parent_name = $parents ? reset($parents)->getName() : null;
+
+        $children = $term_storage->loadChildren($tid);
+        $children_names = array_map(function($child) {{ return $child->getName(); }}, $children);
+
+        // Find content using this term
+        $node_storage = \\Drupal::entityTypeManager()->getStorage('node');
+        $content_usage = [];
+
+        // Get all entity reference fields targeting taxonomy terms
+        $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
+
+        foreach ($field_map['node'] ?? [] as $field_name => $field_info) {{
+            try {{
+                $nids = $node_storage->getQuery()
+                    ->condition($field_name, $tid)
+                    ->accessCheck(FALSE)
+                    ->range(0, 20)
+                    ->execute();
+
+                if ($nids) {{
+                    $nodes = $node_storage->loadMultiple($nids);
+                    foreach ($nodes as $node) {{
+                        $content_usage[] = [
+                            'nid' => (int)$node->id(),
+                            'title' => $node->getTitle(),
+                            'type' => $node->bundle()
+                        ];
+                    }}
+                }}
+            }} catch (\\Exception $e) {{
+                // Field might not reference taxonomy
+            }}
+        }}
+
+        // Get fields that reference this vocabulary
+        $field_configs = \\Drupal::entityTypeManager()
+            ->getStorage('field_config')
+            ->loadMultiple();
+
+        $referencing_fields = [];
+        foreach ($field_configs as $field) {{
+            $settings = $field->getSettings();
+            if (isset($settings['target_type']) && $settings['target_type'] === 'taxonomy_term') {{
+                $handler_settings = $settings['handler_settings'] ?? [];
+                $target_bundles = $handler_settings['target_bundles'] ?? [];
+                if (in_array($term->bundle(), $target_bundles)) {{
+                    $referencing_fields[] = [
+                        'field_name' => $field->getName(),
+                        'field_label' => $field->getLabel(),
+                        'entity_type' => $field->getTargetEntityTypeId(),
+                        'bundles' => [$field->getTargetBundle()]
+                    ];
+                }}
+            }}
+        }}
+
+        $result = [
+            'term' => [
+                'tid' => (int)$tid,
+                'name' => $term->getName(),
+                'description' => $term->getDescription(),
+                'vocabulary' => $term->bundle(),
+                'vocabulary_label' => $vocab ? $vocab->label() : $term->bundle(),
+                'parent' => $parent_name,
+                'children' => array_values($children_names)
+            ],
+            'content_usage' => array_values($content_usage),
+            'views_usage' => [],  // Would need to parse view configs
+            'referencing_fields' => $referencing_fields
+        ];
+
+        echo json_encode($result);
+        """
+
+        result = run_drush_command(["ev", php_code.strip()], timeout=30)
+        return result if result else None
+
+    except Exception as e:
+        logger.debug(f"Could not get term usage from drush: {e}")
+        return None
+
+
+def _get_term_usage_from_files(term_id: int, drupal_root: Path) -> Optional[dict]:
+    """Get term usage from files (very limited fallback)."""
+    # This would require parsing content exports or searching views configs
+    # Not practical without database access
+    return None
 
 
 def main():

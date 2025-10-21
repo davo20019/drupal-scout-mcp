@@ -105,19 +105,30 @@ def _extract_functions(content: str) -> List[str]:
     return functions
 
 
-def _extract_hooks(content: str) -> List[str]:
+def _extract_hooks(content: str) -> List[Dict]:
     """
-    Extract Drupal hook implementations.
+    Extract Drupal hook implementations with line numbers.
 
     Hook functions follow pattern: modulename_hookname()
+
+    Returns:
+        List of dicts with 'name' and 'line' keys
     """
     hooks = []
 
     # Pattern: function modulename_hook_
     pattern = r"function\s+(\w+_hook_\w+)\s*\("
 
-    for match in re.finditer(pattern, content):
-        hooks.append(match.group(1))
+    # Split into lines to get line numbers
+    lines = content.split('\n')
+
+    for line_num, line in enumerate(lines, 1):
+        match = re.search(pattern, line)
+        if match:
+            hooks.append({
+                "name": match.group(1),
+                "line": line_num
+            })
 
     return hooks
 
