@@ -120,15 +120,12 @@ def _extract_hooks(content: str) -> List[Dict]:
     pattern = r"function\s+(\w+_hook_\w+)\s*\("
 
     # Split into lines to get line numbers
-    lines = content.split('\n')
+    lines = content.split("\n")
 
     for line_num, line in enumerate(lines, 1):
         match = re.search(pattern, line)
         if match:
-            hooks.append({
-                "name": match.group(1),
-                "line": line_num
-            })
+            hooks.append({"name": match.group(1), "line": line_num})
 
     return hooks
 

@@ -206,11 +206,11 @@ function test_hook_form_alter(&$form, $form_state, $form_id) {
 
         assert len(result["hooks"]) == 2
         # Hooks are now dicts with 'name' and 'line' keys
-        hook_names = [hook['name'] for hook in result["hooks"]]
+        hook_names = [hook["name"] for hook in result["hooks"]]
         assert "test_hook_cron" in hook_names
         assert "test_hook_form_alter" in hook_names
         # Verify line numbers are present
-        assert all('line' in hook for hook in result["hooks"])
+        assert all("line" in hook for hook in result["hooks"])
 
     def test_parse_class_with_inheritance(self, tmp_path):
         """Test parsing class with extends and implements."""
