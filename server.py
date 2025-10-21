@@ -33,25 +33,25 @@ config = {}
 
 def load_config() -> dict:
     """Load configuration from config.json or environment."""
-    config_path = Path.home() / '.config' / 'drupal-scout' / 'config.json'
+    config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
 
     if config_path.exists():
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             return json.load(f)
 
     # Try local config
-    local_config = Path('config.json')
+    local_config = Path("config.json")
     if local_config.exists():
-        with open(local_config, 'r') as f:
+        with open(local_config, "r") as f:
             return json.load(f)
 
     # No default - user must configure
     raise ValueError(
         "Configuration not found. Please create config.json with:\n"
-        '{\n'
+        "{\n"
         '  "drupal_root": "/path/to/your/drupal",\n'
         '  "modules_path": "modules"\n'
-        '}'
+        "}"
     )
 
 
@@ -61,7 +61,7 @@ def ensure_indexed():
 
     if indexer is None:
         config = load_config()
-        drupal_root = Path(config['drupal_root'])
+        drupal_root = Path(config["drupal_root"])
 
         if not drupal_root.exists():
             raise ValueError(
@@ -104,18 +104,22 @@ def search_functionality(query: str, scope: str = "all", include_drupal_org: boo
     output = prioritizer.format_search_results(results)
 
     # If no local results and drupal.org search enabled, search drupal.org
-    if include_drupal_org and results['total_matches'] == 0:
+    if include_drupal_org and results["total_matches"] == 0:
         logger.info(f"No local results, searching drupal.org for: {query}")
         drupal_org_results = drupal_org_api.search_modules(query, limit=5)
 
         if drupal_org_results:
-            output += "\n\n" + "="*60 + "\n"
-            output += "💡 **No local modules found. Showing available modules from drupal.org:**\n\n"
+            output += "\n\n" + "=" * 60 + "\n"
+            output += (
+                "💡 **No local modules found. Showing available modules from drupal.org:**\n\n"
+            )
             output += format_drupal_org_results(drupal_org_results, query)
 
             # Generate recommendations
-            local_results_list = results['custom_modules'] + results['contrib_modules']
-            output += "\n\n" + generate_recommendations(query, local_results_list, drupal_org_results)
+            local_results_list = results["custom_modules"] + results["contrib_modules"]
+            output += "\n\n" + generate_recommendations(
+                query, local_results_list, drupal_org_results
+            )
 
     return output
 
@@ -241,6 +245,326 @@ def reindex_modules() -> str:
 
 
 @mcp.tool()
+def analyze_module_dependencies(module_name: str = None) -> str:
+    """
+    Analyze module dependency relationships (forward and reverse).
+
+    Unlike 'drush pm:info', this provides comprehensive dependency analysis:
+    - Reverse dependencies: What depends on this module?
+    - Full dependency tree: Not just direct dependencies
+    - Circular dependency detection
+    - Safe uninstall impact analysis
+    - Custom vs contrib coupling analysis
+
+    Use this to answer:
+    - "Can I safely uninstall this module?"
+    - "What will break if I update/remove this?"
+    - "Which modules depend on token/pathauto/etc?"
+    - "Are there circular dependencies?"
+
+    Args:
+        module_name: Module to analyze, or None for system-wide dependency report
+
+    Returns:
+        Comprehensive dependency analysis with uninstall safety assessment
+    """
+    ensure_indexed()
+
+    logger.info(f"Analyzing dependencies for: {module_name or 'all modules'}")
+
+    # Build dependency graph
+    dep_graph = _build_dependency_graph()
+
+    if module_name:
+        # Single module analysis
+        return _analyze_single_module(module_name, dep_graph)
+    else:
+        # System-wide analysis
+        return _analyze_all_dependencies(dep_graph)
+
+
+def _build_dependency_graph() -> dict:
+    """
+    Build a complete dependency graph from indexed modules.
+
+    Returns:
+        dict with:
+        - forward: {module: [dependencies]}
+        - reverse: {module: [dependents]}
+        - modules: {module: metadata}
+    """
+    forward = {}  # module -> what it depends on
+    reverse = {}  # module -> what depends on it
+    modules = {}  # module -> full module data
+
+    all_modules = (
+        indexer.modules.get("custom", [])
+        + indexer.modules.get("contrib", [])
+        + indexer.modules.get("core", [])
+    )
+
+    # Build forward dependencies
+    for module in all_modules:
+        module_name = module.get("module")
+        if not module_name:
+            continue
+
+        modules[module_name] = module
+        dependencies = module.get("dependencies", [])
+
+        # Clean dependency names (remove version constraints)
+        clean_deps = []
+        for dep in dependencies:
+            # Handle "drupal:module" or "module (>=version)"
+            dep_name = dep.split(":")[-1].split("(")[0].strip()
+            clean_deps.append(dep_name)
+
+        forward[module_name] = clean_deps
+
+    # Build reverse dependencies
+    for module_name, deps in forward.items():
+        for dep in deps:
+            if dep not in reverse:
+                reverse[dep] = []
+            reverse[dep].append(module_name)
+
+    return {"forward": forward, "reverse": reverse, "modules": modules}
+
+
+def _find_circular_dependencies(graph: dict) -> list:
+    """
+    Detect circular dependencies using DFS.
+
+    Returns:
+        List of circular dependency chains
+    """
+    forward = graph["forward"]
+    circles = []
+    visited = set()
+    rec_stack = set()
+
+    def dfs(node, path):
+        visited.add(node)
+        rec_stack.add(node)
+        path.append(node)
+
+        for neighbor in forward.get(node, []):
+            if neighbor not in visited:
+                dfs(neighbor, path[:])
+            elif neighbor in rec_stack:
+                # Found a circle
+                circle_start = path.index(neighbor)
+                circle = path[circle_start:] + [neighbor]
+                circles.append(circle)
+
+        rec_stack.remove(node)
+
+    for module in forward.keys():
+        if module not in visited:
+            dfs(module, [])
+
+    return circles
+
+
+def _analyze_single_module(module_name: str, dep_graph: dict) -> str:
+    """Analyze dependencies for a single module."""
+    forward = dep_graph["forward"]
+    reverse = dep_graph["reverse"]
+    modules = dep_graph["modules"]
+
+    # Check if module exists
+    if module_name not in modules:
+        return f"❌ Module '{module_name}' not found in indexed modules\n\n💡 Try: list_modules() or reindex_modules()"
+
+    module = modules[module_name]
+    output = [f"📦 **Dependency Analysis: {module.get('name', module_name)}** (`{module_name}`)\n"]
+
+    module_type = module.get("type", "unknown")
+    output.append(f"**Type:** {module_type}")
+    output.append(f"**Package:** {module.get('package', 'N/A')}\n")
+
+    # Forward dependencies (what this module needs)
+    direct_deps = forward.get(module_name, [])
+    if direct_deps:
+        output.append(f"## ⬇️  Dependencies ({len(direct_deps)})")
+        output.append(f"*Modules that {module_name} requires:*\n")
+
+        for dep in direct_deps:
+            dep_type = modules.get(dep, {}).get("type", "unknown")
+            dep_icon = "📦" if dep_type == "contrib" else "🔧" if dep_type == "custom" else "⚙️ "
+            output.append(f"- {dep_icon} `{dep}` ({dep_type})")
+    else:
+        output.append("## ⬇️  Dependencies\n*No dependencies* - This is a leaf module")
+
+    # Reverse dependencies (what needs this module)
+    dependents = reverse.get(module_name, [])
+    if dependents:
+        output.append(f"\n## ⬆️  Reverse Dependencies ({len(dependents)})")
+        output.append(f"*Modules that depend on {module_name}:*\n")
+
+        # Group by type
+        custom_deps = [d for d in dependents if modules.get(d, {}).get("type") == "custom"]
+        contrib_deps = [d for d in dependents if modules.get(d, {}).get("type") == "contrib"]
+        core_deps = [d for d in dependents if modules.get(d, {}).get("type") == "core"]
+
+        if custom_deps:
+            output.append(f"**Custom modules ({len(custom_deps)}):**")
+            for dep in sorted(custom_deps):
+                output.append(f"- 🔧 `{dep}`")
+
+        if contrib_deps:
+            output.append(f"\n**Contrib modules ({len(contrib_deps)}):**")
+            for dep in sorted(contrib_deps)[:10]:  # Limit to 10
+                output.append(f"- 📦 `{dep}`")
+            if len(contrib_deps) > 10:
+                output.append(f"   ... and {len(contrib_deps) - 10} more")
+
+        if core_deps:
+            output.append(f"\n**Core modules ({len(core_deps)}):**")
+            for dep in sorted(core_deps)[:5]:
+                output.append(f"- ⚙️  `{dep}`")
+    else:
+        output.append(
+            "\n## ⬆️  Reverse Dependencies\n*Nothing depends on this module* - Safe to remove"
+        )
+
+    # Uninstall safety analysis
+    output.append("\n## 🔒 Uninstall Safety Analysis\n")
+
+    if not dependents:
+        output.append("✅ **SAFE TO UNINSTALL**")
+        output.append("- No other modules depend on this")
+        output.append("- Can be removed without breaking anything")
+    else:
+        output.append("⚠️  **CANNOT SAFELY UNINSTALL**")
+        output.append(f"- {len(dependents)} module(s) depend on this")
+
+        if custom_deps:
+            output.append(f"- **{len(custom_deps)} custom module(s)** would break")
+            output.append("- You must refactor custom code first")
+
+        output.append("\n**To uninstall, you must first remove:**")
+        for dep in sorted(dependents)[:5]:
+            output.append(f"  1. `{dep}`")
+        if len(dependents) > 5:
+            output.append(f"  ... and {len(dependents) - 5} more")
+
+    # Check for circular dependencies involving this module
+    circles = _find_circular_dependencies(dep_graph)
+    module_circles = [c for c in circles if module_name in c]
+
+    if module_circles:
+        output.append("\n## ⚠️  Circular Dependencies Detected\n")
+        for i, circle in enumerate(module_circles, 1):
+            output.append(f"**Circle {i}:** {' → '.join(circle)}")
+        output.append("\n💡 Circular dependencies can cause installation/uninstallation issues")
+
+    return "\n".join(output)
+
+
+def _analyze_all_dependencies(dep_graph: dict) -> str:
+    """System-wide dependency analysis."""
+    forward = dep_graph["forward"]
+    reverse = dep_graph["reverse"]
+    modules = dep_graph["modules"]
+
+    output = ["📊 **System-Wide Dependency Analysis**\n"]
+
+    # Overview stats
+    total_modules = len(modules)
+    custom_count = sum(1 for m in modules.values() if m.get("type") == "custom")
+    contrib_count = sum(1 for m in modules.values() if m.get("type") == "contrib")
+    core_count = sum(1 for m in modules.values() if m.get("type") == "core")
+
+    output.append(f"**Total Modules:** {total_modules}")
+    output.append(f"- 🔧 Custom: {custom_count}")
+    output.append(f"- 📦 Contrib: {contrib_count}")
+    output.append(f"- ⚙️  Core: {core_count}\n")
+
+    # Find modules with most dependents (most critical)
+    most_critical = sorted(
+        [(mod, len(deps)) for mod, deps in reverse.items()], key=lambda x: x[1], reverse=True
+    )[:10]
+
+    if most_critical:
+        output.append("## 🔥 Most Critical Modules")
+        output.append("*Modules that many others depend on:*\n")
+        for module_name, dep_count in most_critical:
+            module_type = modules.get(module_name, {}).get("type", "unknown")
+            icon = "📦" if module_type == "contrib" else "🔧" if module_type == "custom" else "⚙️ "
+            output.append(f"- {icon} **`{module_name}`** - {dep_count} modules depend on it")
+
+    # Find orphan modules (nothing depends on them)
+    orphans = [mod for mod in modules.keys() if mod not in reverse or not reverse[mod]]
+
+    output.append(f"\n## 🍃 Independent Modules ({len(orphans)})")
+    output.append("*Modules with no dependents (safe to remove):*\n")
+
+    # Group orphans by type
+    custom_orphans = [m for m in orphans if modules.get(m, {}).get("type") == "custom"]
+    contrib_orphans = [m for m in orphans if modules.get(m, {}).get("type") == "contrib"]
+
+    if custom_orphans:
+        output.append(f"**Custom ({len(custom_orphans)}):**")
+        for mod in sorted(custom_orphans)[:10]:
+            output.append(f"- 🔧 `{mod}`")
+        if len(custom_orphans) > 10:
+            output.append(f"  ... and {len(custom_orphans) - 10} more")
+
+    if contrib_orphans:
+        output.append(f"\n**Contrib ({len(contrib_orphans)}):**")
+        for mod in sorted(contrib_orphans)[:10]:
+            output.append(f"- 📦 `{mod}`")
+        if len(contrib_orphans) > 10:
+            output.append(f"  ... and {len(contrib_orphans) - 10} more")
+
+    # Circular dependencies
+    circles = _find_circular_dependencies(dep_graph)
+
+    if circles:
+        output.append(f"\n## ⚠️  Circular Dependencies ({len(circles)})\n")
+        for i, circle in enumerate(circles[:5], 1):
+            output.append(f"**{i}.** {' → '.join(circle)}")
+        if len(circles) > 5:
+            output.append(f"\n... and {len(circles) - 5} more circular dependencies")
+        output.append("\n💡 Use analyze_module_dependencies('module_name') for details")
+    else:
+        output.append("\n## ✅ No Circular Dependencies\n*Dependency tree is clean*")
+
+    # Custom module coupling
+    custom_to_contrib_deps = {}
+    for module_name in modules.keys():
+        if modules[module_name].get("type") == "custom":
+            contrib_deps = [
+                d
+                for d in forward.get(module_name, [])
+                if modules.get(d, {}).get("type") == "contrib"
+            ]
+            if contrib_deps:
+                custom_to_contrib_deps[module_name] = contrib_deps
+
+    if custom_to_contrib_deps:
+        output.append("\n## 🔗 Custom Module Dependencies")
+        output.append("*Contrib modules your custom code depends on:*\n")
+
+        # Find most-used contrib modules by custom code
+        contrib_usage = {}
+        for contrib_deps in custom_to_contrib_deps.values():
+            for dep in contrib_deps:
+                contrib_usage[dep] = contrib_usage.get(dep, 0) + 1
+
+        most_used = sorted(contrib_usage.items(), key=lambda x: x[1], reverse=True)[:10]
+        for contrib, count in most_used:
+            output.append(f"- 📦 **`{contrib}`** - used by {count} custom module(s)")
+
+    output.append(
+        "\n💡 **Tip:** Use `analyze_module_dependencies('module_name')` for detailed analysis"
+    )
+
+    return "\n".join(output)
+
+
+@mcp.tool()
 def search_drupal_org(query: str, limit: int = 10) -> str:
     """
     Search for available modules on drupal.org.
@@ -286,9 +610,7 @@ def get_popular_drupal_modules(category: str = "", limit: int = 20) -> str:
     if not modules:
         return "❌ Could not fetch popular modules from drupal.org"
 
-    output = [
-        f"📊 **Most Popular Drupal Modules**"
-    ]
+    output = ["📊 **Most Popular Drupal Modules**"]
 
     if category:
         output[0] += f" in category '{category}'"
@@ -299,7 +621,7 @@ def get_popular_drupal_modules(category: str = "", limit: int = 20) -> str:
         output.append(f"{i}. **{module['name']}** (`{module['machine_name']}`)")
         output.append(f"   {module['description'][:150]}...")
 
-        usage = module.get('project_usage', 0)
+        usage = module.get("project_usage", 0)
         if usage > 0:
             usage_str = f"{usage:,}" if usage < 1000000 else f"{usage/1000000:.1f}M"
             output.append(f"   📊 {usage_str} installations")
@@ -312,7 +634,7 @@ def get_popular_drupal_modules(category: str = "", limit: int = 20) -> str:
     output.append("   • Check maintenance status before installing")
     output.append("   • Review recent activity in issue queue")
 
-    return '\n'.join(output)
+    return "\n".join(output)
 
 
 @mcp.tool()
@@ -334,7 +656,7 @@ def get_module_recommendation(need: str) -> str:
     try:
         ensure_indexed()
         local_results = searcher.search_functionality(need, scope="all")
-        local_modules = local_results['custom_modules'] + local_results['contrib_modules']
+        local_modules = local_results["custom_modules"] + local_results["contrib_modules"]
     except Exception as e:
         logger.warning(f"Could not search locally: {e}")
         local_modules = []
@@ -363,9 +685,7 @@ def get_module_recommendation(need: str) -> str:
 
         # Rank by installations
         top_modules = sorted(
-            drupal_org_modules,
-            key=lambda x: x.get('project_usage', 0),
-            reverse=True
+            drupal_org_modules, key=lambda x: x.get("project_usage", 0), reverse=True
         )[:3]
 
         for i, mod in enumerate(top_modules, 1):
@@ -373,11 +693,11 @@ def get_module_recommendation(need: str) -> str:
             output.append(f"   • Machine name: `{mod['machine_name']}`")
             output.append(f"   • {mod['description'][:150]}...")
 
-            usage = mod.get('project_usage', 0)
+            usage = mod.get("project_usage", 0)
             if usage:
                 output.append(f"   • Installations: {usage:,}")
 
-            maint = mod.get('maintenance_status')
+            maint = mod.get("maintenance_status")
             if maint:
                 output.append(f"   • Status: {maint}")
 
@@ -391,7 +711,9 @@ def get_module_recommendation(need: str) -> str:
         output.append("3. **Compare with contrib** - Are drupal.org options better?")
     else:
         if drupal_org_modules:
-            top_choice = sorted(drupal_org_modules, key=lambda x: x.get('project_usage', 0), reverse=True)[0]
+            top_choice = sorted(
+                drupal_org_modules, key=lambda x: x.get("project_usage", 0), reverse=True
+            )[0]
             output.append(f"1. **Try: {top_choice['name']}** - Most popular option")
             output.append("2. **Install in dev environment** - Test before production")
             output.append("3. **Review documentation** - Understand features and limitations")
@@ -401,7 +723,7 @@ def get_module_recommendation(need: str) -> str:
             output.append("2. **Consider similar modules** - Search with different keywords")
             output.append("3. **Check Drupal ecosystem** - Ask community for recommendations")
 
-    return '\n'.join(output)
+    return "\n".join(output)
 
 
 @mcp.tool()
@@ -434,25 +756,25 @@ def get_drupal_org_module_details(module_name: str, include_issues: bool = False
     ]
 
     # Description
-    if details.get('description'):
+    if details.get("description"):
         output.append(f"{details['description']}\n")
 
     # Project URL
-    if details.get('url'):
+    if details.get("url"):
         output.append(f"🔗 **Project page:** {details['url']}\n")
 
     # Drupal Version Compatibility - CRITICAL INFO
-    drupal_versions = details.get('drupal_versions', [])
+    drupal_versions = details.get("drupal_versions", [])
     if drupal_versions:
         versions_str = ", ".join(drupal_versions)
         output.append(f"✅ **Compatible with:** {versions_str}\n")
 
     # Security & Trust indicators
     security_badges = []
-    if details.get('security_coverage') == 'covered':
+    if details.get("security_coverage") == "covered":
         security_badges.append("🛡️  Security coverage")
 
-    star_count = details.get('star_count', 0)
+    star_count = details.get("star_count", 0)
     if star_count > 0:
         security_badges.append(f"⭐ {star_count} stars")
 
@@ -460,19 +782,23 @@ def get_drupal_org_module_details(module_name: str, include_issues: bool = False
         output.append(f"**Trust indicators:** {' • '.join(security_badges)}\n")
 
     # Usage statistics - Total
-    usage = details.get('project_usage', 0)
+    usage = details.get("project_usage", 0)
     if usage:
         usage_str = f"{usage:,}" if usage < 1000000 else f"{usage/1000000:.1f}M"
         output.append(f"📊 **Total installations:** {usage_str}")
 
     # Usage by version - Show top 3
-    usage_by_version = details.get('usage_by_version', {})
+    usage_by_version = details.get("usage_by_version", {})
     if usage_by_version and isinstance(usage_by_version, dict):
         # Sort by usage count
         sorted_versions = sorted(
-            [(k, v) for k, v in usage_by_version.items() if isinstance(v, (int, str)) and str(v).isdigit()],
+            [
+                (k, v)
+                for k, v in usage_by_version.items()
+                if isinstance(v, (int, str)) and str(v).isdigit()
+            ],
             key=lambda x: int(x[1]),
-            reverse=True
+            reverse=True,
         )[:3]
         if sorted_versions:
             output.append("   **By version:**")
@@ -480,67 +806,71 @@ def get_drupal_org_module_details(module_name: str, include_issues: bool = False
                 output.append(f"   • {version}: {int(count):,} sites")
 
     # Dates
-    created = details.get('created_date')
-    updated = details.get('last_updated')
+    created = details.get("created_date")
+    updated = details.get("last_updated")
     if created or updated:
-        output.append(f"\n📅 **Timeline:**")
+        output.append("\n📅 **Timeline:**")
         if created:
             output.append(f"   • Created: {created}")
         if updated:
             output.append(f"   • Last updated: {updated}")
 
     # Status
-    maint = details.get('maintenance_status')
-    dev = details.get('development_status')
+    maint = details.get("maintenance_status")
+    dev = details.get("development_status")
     if maint or dev:
-        output.append(f"\n⚙️  **Status:**")
+        output.append("\n⚙️  **Status:**")
         if maint:
             output.append(f"   • Maintenance: {maint}")
         if dev:
             output.append(f"   • Development: {dev}")
 
     # Supporting organizations
-    org_count = details.get('supporting_orgs_count', 0)
+    org_count = details.get("supporting_orgs_count", 0)
     if org_count > 0:
         output.append(f"\n🏢 **Backed by {org_count} organization{'s' if org_count != 1 else ''}**")
 
     # Categories
-    if details.get('categories'):
+    if details.get("categories"):
         output.append(f"\n🏷️  **Categories:** {', '.join(details['categories'])}")
 
     # Issue queue link
-    if details.get('has_issue_queue'):
-        nid = details.get('nid', '')
+    if details.get("has_issue_queue"):
+        nid = details.get("nid", "")
         if nid:
-            output.append(f"\n🐛 **Issue queue:** https://www.drupal.org/project/issues/{details['machine_name']}")
+            output.append(
+                f"\n🐛 **Issue queue:** https://www.drupal.org/project/issues/{details['machine_name']}"
+            )
 
     # Documentation links
-    doc_links = details.get('documentation_links', [])
+    doc_links = details.get("documentation_links", [])
     if doc_links:
         output.append(f"\n📖 **Documentation:** {doc_links[0]}")
 
     # Recent Issues - for qualitative analysis
-    recent_issues = details.get('recent_issues', [])
+    recent_issues = details.get("recent_issues", [])
     if recent_issues:
         output.append(f"\n\n🔍 **Recent Issue Activity** ({len(recent_issues)} recent issues)")
-        output.append(f"   *Analyze for maintainer activity, common problems, and community health*\n")
+        output.append(
+            "   *Analyze for maintainer activity, common problems, and community health*\n"
+        )
 
         for i, issue in enumerate(recent_issues[:10], 1):  # Show top 10
             output.append(f"   {i}. **{issue['title']}**")
 
             # Add metadata
             metadata = []
-            if issue.get('status') and issue['status'] != 'Unknown':
+            if issue.get("status") and issue["status"] != "Unknown":
                 metadata.append(f"Status: {issue['status']}")
-            if issue.get('priority') and issue['priority'] != 'Unknown':
+            if issue.get("priority") and issue["priority"] != "Unknown":
                 metadata.append(f"Priority: {issue['priority']}")
-            if issue.get('category') and issue['category'] != 'Unknown':
+            if issue.get("category") and issue["category"] != "Unknown":
                 metadata.append(f"Category: {issue['category']}")
 
             if metadata:
                 output.append(f"      {' • '.join(metadata)}")
 
-            if issue.get('url'):
+            if issue.get("url"):
                 output.append(f"      🔗 {issue['url']}")
             output.append("")
 
@@ -554,20 +884,20 @@ def get_drupal_org_module_details(module_name: str, include_issues: bool = False
         output.append("      • Setup complexity discussions")
 
     # Installation guide
-    output.append(f"\n\n💻 **To install:**")
-    output.append(f"```bash")
+    output.append("\n\n💻 **To install:**")
+    output.append("```bash")
     output.append(f"composer require drupal/{details['machine_name']}")
     output.append(f"drush en {details['machine_name']}")
-    output.append(f"```")
+    output.append("```")
 
-    output.append(f"\n📚 **Next steps:**")
-    output.append(f"   1. Review the project page for full documentation")
-    if details.get('has_issue_queue'):
-        output.append(f"   2. Check issue queue for known problems")
-    output.append(f"   3. Verify compatibility with your Drupal version")
-    output.append(f"   4. Test in development environment first")
+    output.append("\n📚 **Next steps:**")
+    output.append("   1. Review the project page for full documentation")
+    if details.get("has_issue_queue"):
+        output.append("   2. Check issue queue for known problems")
+    output.append("   3. Verify compatibility with your Drupal version")
+    output.append("   4. Test in development environment first")
 
-    return '\n'.join(output)
+    return "\n".join(output)
 
 
 @mcp.tool()
@@ -598,82 +928,87 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
     try:
         if indexer and indexer.drupal_root:
             # Try to read Drupal version from core
-            version_file = indexer.drupal_root / 'core' / 'lib' / 'Drupal.php'
+            version_file = indexer.drupal_root / "core" / "lib" / "Drupal.php"
             if version_file.exists():
                 import re
-                with open(version_file, 'r') as f:
+
+                with open(version_file, "r") as f:
                     content = f.read()
                     match = re.search(r"const VERSION = '([^']+)'", content)
                     if match:
                         full_version = match.group(1)
                         # Extract major version (e.g., "10.2.3" -> "10")
-                        drupal_version = full_version.split('.')[0]
-                        logger.info(f"Detected Drupal version: {full_version} (major: {drupal_version})")
+                        drupal_version = full_version.split(".")[0]
+                        logger.info(
+                            f"Detected Drupal version: {full_version} (major: {drupal_version})"
+                        )
     except Exception as e:
         logger.debug(f"Could not detect Drupal version: {e}")
 
-    matches = drupal_org_api.search_issues(module_name, problem_description, limit=limit, drupal_version=drupal_version)
+    matches = drupal_org_api.search_issues(
+        module_name, problem_description, limit=limit, drupal_version=drupal_version
+    )
 
     if not matches:
         return f"❌ No matching issues found in '{module_name}' for your problem.\n\n💡 **Tips:**\n   • Try broader keywords\n   • Check if the module name is correct\n   • The issue might be very new or very old (we search recent issues)"
 
     output = [
         f"🔍 **Found {len(matches)} matching issue{'s' if len(matches) != 1 else ''} in {module_name}**",
-        f"   Searching for: \"{problem_description}\"\n",
+        f'   Searching for: "{problem_description}"\n',
     ]
 
     # Map status codes to human-readable labels
     status_map = {
-        '1': 'Active',
-        '2': 'Fixed',
-        '3': 'Closed (duplicate)',
-        '4': 'Postponed',
-        '5': 'Closed (won\'t fix)',
-        '6': 'Closed (works as designed)',
-        '7': 'Closed (fixed)',
-        '8': 'Needs review',
-        '13': 'Needs work',
-        '14': 'Reviewed & tested',
-        '15': 'Patch (to be ported)',
-        '16': 'Postponed (maintainer needs more info)',
-        '17': 'Closed (outdated)',
-        '18': 'Closed (cannot reproduce)',
+        "1": "Active",
+        "2": "Fixed",
+        "3": "Closed (duplicate)",
+        "4": "Postponed",
+        "5": "Closed (won't fix)",
+        "6": "Closed (works as designed)",
+        "7": "Closed (fixed)",
+        "8": "Needs review",
+        "13": "Needs work",
+        "14": "Reviewed & tested",
+        "15": "Patch (to be ported)",
+        "16": "Postponed (maintainer needs more info)",
+        "17": "Closed (outdated)",
+        "18": "Closed (cannot reproduce)",
     }
 
     # Map priority codes to labels
     priority_map = {
-        '400': 'Critical',
-        '300': 'Major',
-        '200': 'Normal',
-        '100': 'Minor',
+        "400": "Critical",
+        "300": "Major",
+        "200": "Normal",
+        "100": "Minor",
     }
 
     # Map category codes to labels
     category_map = {
-        '1': 'Bug report',
-        '2': 'Task',
-        '3': 'Feature request',
-        '4': 'Support request',
-        '5': 'Plan',
+        "1": "Bug report",
+        "2": "Task",
+        "3": "Feature request",
+        "4": "Support request",
+        "5": "Plan",
     }
 
     for i, issue in enumerate(matches, 1):
-        relevance = issue.get('relevance_score', 0)
+        relevance = issue.get("relevance_score", 0)
         output.append(f"{i}. **{issue['title']}**")
 
         # Add metadata
         metadata = []
 
-        status_code = str(issue.get('status', 'Unknown'))
+        status_code = str(issue.get("status", "Unknown"))
         status = status_map.get(status_code, f"Status {status_code}")
         metadata.append(f"Status: {status}")
 
-        priority_code = str(issue.get('priority', ''))
+        priority_code = str(issue.get("priority", ""))
         if priority_code in priority_map:
             priority = priority_map[priority_code]
             metadata.append(f"Priority: {priority}")
 
-        category_code = str(issue.get('category', ''))
+        category_code = str(issue.get("category", ""))
         if category_code in category_map:
             category = category_map[category_code]
             metadata.append(f"Type: {category}")
@@ -687,7 +1022,8 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
 
         # Last updated
         import datetime
-        changed = issue.get('changed', 0)
+
+        changed = issue.get("changed", 0)
         if changed:
             try:
                 changed_date = datetime.datetime.fromtimestamp(int(changed))
@@ -704,11 +1040,11 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
                     years = time_ago.days // 365
                     time_str = f"{years} year{'s' if years != 1 else ''} ago"
                 output.append(f"   Last updated: {time_str}")
-            except:
+            except (ValueError, OSError):
                 pass
 
         # Link
-        if issue.get('url'):
+        if issue.get("url"):
             output.append(f"   🔗 {issue['url']}")
         output.append("")
 
@@ -718,7 +1054,7 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
     output.append("   3. If no solution exists, consider commenting on the most relevant issue")
     output.append("   4. Check if the issue has a recommended workaround")
 
-    return '\n'.join(output)
+    return "\n".join(output)
 
 
 def main():

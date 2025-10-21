@@ -62,11 +62,16 @@ class ModuleIndexer:
             else []
         )
 
+        # Scan core modules
+        core_modules_path = self.drupal_root / "core" / "modules"
+        core_modules = self._scan_directory(core_modules_path) if core_modules_path.exists() else []
+
         # Index each module
         indexed = {
             "custom": [self._index_module(m) for m in custom_modules],
             "contrib": [self._index_module(m) for m in contrib_modules],
-            "total": len(custom_modules) + len(contrib_modules),
+            "core": [self._index_module(m) for m in core_modules],
+            "total": len(custom_modules) + len(contrib_modules) + len(core_modules),
         }
 
         # Store in instance

@@ -1,6 +1,9 @@
 # Drupal Scout MCP
 
-A Model Context Protocol server for Drupal module discovery and troubleshooting. Search local modules, find drupal.org solutions, and get intelligent recommendations - all from your IDE.
+A Model Context Protocol **data provider** for Drupal module discovery and troubleshooting. This MCP server gives AI assistants (Claude, Cursor, etc.) deep knowledge of your Drupal codebase and drupal.org's module ecosystem.
+
+**What it does:** Provides data about modules, not execution
+**What it doesn't do:** Execute drush/composer commands (your AI handles that)
 
 ## Features
 
@@ -9,6 +12,7 @@ A Model Context Protocol server for Drupal module discovery and troubleshooting.
 - Find functionality across custom and contrib modules
 - Detect unused modules and redundant functionality
 - Analyze service dependencies and routing
+- **Enhanced dependency analysis** (reverse deps, circular detection, uninstall safety)
 
 **Drupal.org Integration**
 - Search 50,000+ modules on drupal.org
@@ -109,6 +113,13 @@ Example: "Should I build a PDF export feature?"
 Example: "Reindex modules"
 ```
 
+**analyze_module_dependencies** - Analyze module dependency relationships
+```
+Example: "Can I safely uninstall the token module?"
+Shows: Reverse dependencies, circular deps, uninstall safety
+Unique: Unlike drush, shows what DEPENDS ON a module
+```
+
 ### Drupal.org Tools
 
 **search_drupal_org** - Search for modules on drupal.org
@@ -164,25 +175,97 @@ User: "Should I use samlauth or simplesamlphp_auth for Drupal 11?"
 Result: Compares modules, shows migration patterns, provides recommendation
 ```
 
+### Complete Workflow: Discovery to Installation
+```
+User: "I need SAML authentication for Azure AD"
+MCP: search_drupal_org("SAML authentication")
+MCP: get_drupal_org_module_details("samlauth", include_issues=True)
+MCP: search_module_issues("samlauth", "Azure AD")
+Result: MCP provides comprehensive module data, issues, and recommendations
+
+User: "Install samlauth"
+AI: Uses Bash to run: ddev composer require drupal/samlauth && ddev drush en samlauth
+AI: Calls reindex_modules() to update MCP's index
+Result: Module installed with AI executing commands based on your environment
+```
+
+### Cleanup Workflow
+```
+User: "Clean up unused modules"
+MCP: find_unused_contrib()
+Result: MCP identifies devel, kint, admin_toolbar_tools as unused (based on indexed data)
+
+User: "Remove them"
+AI: Uses Bash to uninstall and remove from composer
+AI: Calls reindex_modules() to update MCP's index
+Result: Modules removed, MCP index updated
+```
+
+### Troubleshooting Workflow
+```
+User: "Getting errors with webform"
+MCP: search_module_issues("webform", "error description")
+Result: MCP finds relevant issues from drupal.org with solutions
+
+AI: Uses Bash to check logs, run updates, clear caches as needed
+Result: AI executes fixes based on MCP's data
+```
+
+### Dependency Analysis Workflow
+```
+User: "Can I safely uninstall the token module?"
+MCP: analyze_module_dependencies("token")
+Result: "⚠️ CANNOT SAFELY UNINSTALL
+         - 27 modules depend on token
+         - Including: pathauto, metatag, my_custom_module
+         - Must remove dependents first"
+
+User: "What are my most critical modules?"
+MCP: analyze_module_dependencies()  # System-wide analysis
+Result: Shows modules with most dependents, circular dependencies,
+        custom module coupling, and safe-to-remove candidates
+```
+
 ## How It Works
+
+### Division of Labor
+
+**MCP Server (Data Provider) - What Drupal Scout Does:**
+- 📊 Indexes your local Drupal codebase
+- 🔍 Provides fast searching across modules
+- 🌐 Fetches data from drupal.org (modules, issues, stats)
+- 💾 Caches drupal.org responses (1 hour TTL)
+- 🧠 Analyzes dependencies and redundancies
+- 📈 Recommends modules based on your needs
+
+**AI Assistant (Action Executor) - What Your AI Does:**
+- 🔧 Executes drush/composer/git commands
+- 🐳 Detects your environment (DDEV, Lando, Docker, etc.)
+- ⚡ Runs commands appropriate for your setup
+- 🔄 Chains operations efficiently
+- 🛠️ Handles errors and edge cases
+- 📝 Calls reindex_modules() after changes
+
+### Technical Details
 
 **Local Indexing**
 - Parses .info.yml, .services.yml, .routing.yml, and PHP files
 - Indexes services, routes, dependencies, and keywords
 - Builds searchable database of functionality
-- Updates automatically when modules change
+- Call reindex_modules() after installing/removing modules
 
 **Drupal.org Integration**
 - Uses drupal.org REST API for module data
 - Scrapes project pages for accurate compatibility
 - Fetches issue queues for troubleshooting
-- Caches results for performance (1 hour TTL)
+- Automatic Drupal version filtering
 
-**Version Filtering**
-- Detects your Drupal version automatically
-- Filters issue results for compatibility
-- Understands D7 vs D8/9/10/11 differences
-- Shows only relevant results
+**Why This Architecture?**
+- ✅ MCP focuses on Drupal domain knowledge
+- ✅ AI handles environment-specific execution
+- ✅ Simpler, more maintainable code
+- ✅ Works with any dev environment (DDEV, Lando, etc.)
+- ✅ AI can adapt to errors better than hardcoded commands
 
 ## Requirements
 
