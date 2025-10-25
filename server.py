@@ -3068,6 +3068,13 @@ def get_all_taxonomy_usage(
     This is MUCH more efficient than calling get_taxonomy_info() for each term individually.
     For 562 terms: approximately 5,000 tokens instead of 129,000 tokens (96% savings).
 
+    **PERFORMANCE NOTE:**
+    - Small vocabularies (1-50 terms): 5-10 seconds
+    - Medium vocabularies (50-200 terms): 15-30 seconds
+    - Large vocabularies (200-500 terms): 30-60 seconds
+    - Very large vocabularies (500+ terms): 60-120 seconds
+    - Progress messages will appear in real-time showing completion status
+
     **USE THIS TOOL** when you need to:
     - Audit all terms in a vocabulary for cleanup
     - Generate CSV/table of term usage across entire vocabulary
@@ -3199,6 +3206,10 @@ def _get_all_terms_usage_from_drush(
 
         $terms = $term_storage->loadMultiple($term_ids);
         $results = [];
+        $total_terms = count($terms);
+
+        // Progress: Initial status
+        fwrite(STDERR, "Analyzing " . $total_terms . " terms in vocabulary '" . $vocabulary . "'...\\n");
 
         // Get field map once (reuse for all terms)
         $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
@@ -3222,7 +3233,16 @@ def _get_all_terms_usage_from_drush(
             }}
         }}
 
+        fwrite(STDERR, "Checking " . count($field_tables) . " field tables for term usage...\\n");
+
+        $processed = 0;
         foreach ($terms as $term) {{
+            $processed++;
+
+            // Progress: Show every 50 terms or at key milestones
+            if ($processed % 50 === 0 || $processed === 1 || $processed === $total_terms) {{
+                fwrite(STDERR, "Progress: " . $processed . "/" . $total_terms . " terms processed\\n");
+            }}
             $tid = (int)$term->id();
 
             // Get term metadata
@@ -3308,6 +3328,9 @@ def _get_all_terms_usage_from_drush(
                 'warnings' => $warnings
             ];
         }}
+
+        // Progress: Completion
+        fwrite(STDERR, "Analysis complete! Processed " . $total_terms . " terms.\\n");
 
         echo json_encode($results);
         """
