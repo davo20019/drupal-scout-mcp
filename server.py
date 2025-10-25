@@ -784,19 +784,62 @@ def search_drupal_org(query: str, limit: int = 10) -> str:
     Use this to discover modules you could install for new functionality.
     Great when you need to find solutions for features you don't have yet.
 
+    **SEARCH TIPS FOR AI - IMPORTANT:**
+    - drupal.org search works best with SHORT, SPECIFIC terms
+    - Use SINGLE WORDS instead of phrases: "openai" NOT "AI artificial intelligence"
+    - If no results, try SYNONYMS or RELATED terms individually
+    - For compound topics, search each term separately
+
+    **Common successful searches:**
+    - AI/ML: "openai", "anthropic", "chatgpt", "llm", "ai_interpolator" (search EACH separately)
+    - SEO: "metatag", "pathauto", "redirect", "xmlsitemap"
+    - Commerce: "commerce", "ubercart", "payment"
+    - Forms: "webform", "entityform"
+
+    **Strategy when user asks for broad topics:**
+    - User: "install AI modules" → Try: search_drupal_org("openai"), then search_drupal_org("anthropic")
+    - User: "e-commerce modules" → Try: search_drupal_org("commerce")
+    - Break broad requests into multiple specific searches
+
     Args:
-        query: What to search for (e.g., "commerce", "SEO", "migration")
+        query: What to search for - USE SHORT TERMS (e.g., "openai", "commerce", "metatag")
+               Single words work best. Avoid long phrases.
         limit: Maximum number of results to return (default: 10)
 
     Returns:
-        List of available modules from drupal.org with details
+        List of available modules from drupal.org with details, or suggestions if no results
     """
     logger.info(f"Searching drupal.org for: {query}")
 
     modules = drupal_org_api.search_modules(query, limit=limit)
 
     if not modules:
-        return f"❌ No modules found on drupal.org for '{query}'"
+        # Provide helpful suggestions based on query
+        suggestions = {
+            "ai": ["openai", "anthropic", "chatgpt", "llm"],
+            "artificial intelligence": ["openai", "anthropic", "ai"],
+            "machine learning": ["openai", "ai", "ml"],
+            "chatbot": ["chatgpt", "openai", "anthropic"],
+            "seo": ["metatag", "pathauto", "redirect", "xmlsitemap"],
+            "ecommerce": ["commerce", "ubercart"],
+            "e-commerce": ["commerce", "ubercart"],
+            "email": ["smtp", "mailsystem", "mimemail"],
+        }
+
+        query_lower = query.lower()
+        suggested_terms = []
+        for key, terms in suggestions.items():
+            if key in query_lower or query_lower in key:
+                suggested_terms = terms
+                break
+
+        if suggested_terms:
+            suggestion_text = f"\n\n💡 TRY THESE SPECIFIC SEARCHES INSTEAD:\n" + "\n".join([f"   - search_drupal_org(\"{term}\")" for term in suggested_terms])
+            suggestion_text += f"\n\n(drupal.org search works better with short, specific terms)"
+        else:
+            suggestion_text = "\n\n💡 TIP: Try shorter, more specific terms. Single words work best.\n   Example: Instead of 'user authentication oauth', try 'oauth' or 'saml'"
+
+        return f"❌ No modules found on drupal.org for '{query}'{suggestion_text}"
 
     return format_drupal_org_results(modules, query)
 
