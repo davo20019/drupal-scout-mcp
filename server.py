@@ -3655,6 +3655,7 @@ def export_nodes_to_csv(
         # Get all nodes via drush
         logger.info(f"Fetching nodes{' for content type: ' + content_type if content_type else ''}...")
         nodes = _get_all_nodes_from_drush(
+            drupal_root=drupal_root,
             content_type=content_type,
             summary_only=summary_only,
             include_unpublished=include_unpublished,
@@ -3752,6 +3753,7 @@ def export_nodes_to_csv(
 
 
 def _get_all_nodes_from_drush(
+    drupal_root: Path,
     content_type: Optional[str] = None,
     summary_only: bool = True,
     include_unpublished: bool = False,
@@ -3925,6 +3927,7 @@ def _get_all_nodes_from_drush(
             cmd,
             capture_output=True,
             text=True,
+            cwd=str(drupal_root),  # Run in Drupal root directory
             timeout=600,  # 10 minute timeout for large datasets
         )
 
