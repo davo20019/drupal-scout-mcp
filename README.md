@@ -286,6 +286,40 @@ Smart detection: Auto-detects redirect and metatag modules for enhanced data
 AI knows: Automatically sets include_field_data=True when user asks for "body text", "field data", "complete export", or "migration data"
 ```
 
+**export_users_to_csv** - Export user accounts directly to CSV for audits and migrations
+```
+Example: "Export all users to CSV"
+Example: "Export users with full profile data for migration"
+Example: "Export all users including blocked accounts"
+Bypasses: MCP token limits by writing directly to filesystem
+Perfect for: User audits, compliance reporting (GDPR), migration planning, inactive account cleanup
+Output: Saves to Drupal root directory as users_export_{timestamp}.csv
+Filters: include_blocked (default: False), limit
+Modes:
+  - summary_only=True: uid, name, email, status, roles, created, access (7 columns, fast)
+  - summary_only=False: 15+ columns including:
+    * Basic: uid, uuid, name, email, status, langcode
+    * Activity: created, changed, access (last login), login (last access)
+    * Authorization: roles (pipe-separated list, e.g., "administrator | editor")
+    * Profile: timezone, preferred_langcode, init (original email), picture
+  - include_field_data=True: Adds custom user profile fields (use with summary_only=False)
+    **WHY USE THIS:**
+    - Migration planning: Map profile fields to new system
+    - User data export: GDPR compliance, data portability
+    - Profile analysis: Find incomplete profiles, missing fields
+    - Custom field audit: See what profile data exists
+    **WHAT YOU GET:**
+    * All custom user fields auto-detected and included
+    * Profile pictures/avatars (file paths)
+    * Text fields, links, entity references
+    * Boolean fields (YES/NO format)
+    * Performance: Adds 20-30% to export time
+Performance: 100 users ~5s, 1000 users ~30s, 5000 users ~2min
+Use case: User migration, GDPR exports, security audits, cleanup planning
+Smart detection: Automatically sets include_field_data=True when user asks for "profile data", "user fields", or "complete export"
+Activity tracking: Shows last login, last access, account age for inactive user identification
+```
+
 **get_watchdog_logs** - Get recent Drupal error and warning logs for debugging
 ```
 Example: "Show me recent errors"
@@ -833,6 +867,93 @@ User: "Perfect! The schools view already exists with the filters I need"
 Result: Found existing view with needed filters in a single query
         Entity type filtering prevented showing irrelevant views
         Helped avoid creating duplicate functionality
+```
+
+### User Audit and Migration Workflow (User CSV Export)
+```
+User: "I need to audit our user accounts and prepare for migration to the new authentication system"
+AI: "I'll export all your user accounts with full details for analysis."
+MCP: export_users_to_csv(summary_only=False, include_blocked=True)
+Result: "✅ Successfully exported 523 users to /path/to/drupal/users_export_20251025_143000.csv (85 KB)
+
+         Roles found: administrator (3), editor (12), content_creator (45), authenticated (463)
+
+         Columns included (15 total):
+         - Basic: uid, uuid, name, email, status, langcode
+         - Activity: created, changed, access (last login), login (last access)
+         - Authorization: roles
+         - Profile: timezone, preferred_langcode, init, picture
+
+         Preview:
+         uid,uuid,name,email,status,langcode,created,changed,access,login,roles,timezone,preferred_langcode,init,picture
+         1,abc-123,admin,admin@example.com,active,en,2020-01-15 10:30:00,2024-10-25 09:15:00,2024-10-25 14:30:00,2024-10-25 09:15:00,administrator,America/New_York,en,admin@example.com,public://pictures/picture-1.jpg
+         2,def-456,editor1,editor@example.com,active,en,2021-03-20 14:22:00,2024-10-20 11:05:00,2024-10-24 16:45:00,2024-10-20 11:05:00,editor,America/Los_Angeles,en,editor@example.com,"
+
+AI: "Perfect! I've exported all 523 user accounts including blocked users. The CSV includes:
+     - User activity data: Last login, last access times
+     - Authorization: All role assignments
+     - Account status: Active vs blocked
+     - Original registration info: Creation date, initial email
+     - Profile settings: Timezone, language preferences
+
+     You can now open this in Excel/Google Sheets to:
+     - Identify inactive users (sort by 'access' column)
+     - Audit role assignments (filter by 'roles' column)
+     - Find accounts to cleanup (blocked status, never logged in)
+     - Plan migration mapping (email → new auth system)
+     - GDPR compliance (export user data on request)
+
+     Would you like me to analyze specific patterns?"
+
+User: "Show me users who haven't logged in for over a year"
+AI: [Reads CSV file and filters by access date]
+    "Found 87 users who haven't logged in since October 2023:
+
+     INACTIVE ADMINISTRATORS (2):
+     - uid:45 'old_admin' - Last login: 2022-08-15 (2+ years ago)
+     - uid:67 'backup_admin' - Last login: 2023-03-20 (1.5 years ago)
+
+     INACTIVE EDITORS (12):
+     - uid:89 'john.smith' - Last login: 2023-05-10
+     - uid:134 'jane.doe' - Last login: 2023-02-28
+     ... [continues listing]
+
+     INACTIVE REGULAR USERS (73):
+     - Many accounts created but never logged in (access: Never)
+
+     RECOMMENDATIONS:
+     - Review administrator accounts - should backup_admin still have admin rights?
+     - Consider blocking or deleting accounts with 'Never' login status
+     - Send re-activation emails to editors before blocking"
+
+User: "What about blocked accounts?"
+AI: [Filters CSV by status column]
+    "Blocked accounts analysis:
+     - 23 blocked user accounts total
+     - 15 were spam accounts (registered but never verified)
+     - 5 were former employees (blocked after leaving)
+     - 3 were security-related blocks
+
+     Safe to delete: The 15 spam accounts (uids: 234, 267, 289...)"
+
+User: "Export users with their profile fields for the migration"
+AI: "I'll export with full profile data for migration planning."
+MCP: export_users_to_csv(summary_only=False, include_field_data=True, include_blocked=True)
+Result: "✅ Successfully exported 523 users with profile fields (142 KB)
+
+         Additional custom fields detected and included:
+         - field_department (entity reference to taxonomy)
+         - field_bio (text field)
+         - field_phone_number (telephone)
+         - field_office_location (text)
+
+         You can now map these fields to your new authentication system."
+
+AI: "Perfect! The export now includes all custom profile fields. You can use this to:
+     1. Map field_department → new_system.department
+     2. Map field_bio → new_system.profile.about_me
+     3. Map field_phone_number → new_system.contact.phone
+     4. Identify which users have incomplete profiles (empty fields)"
 ```
 
 ## How It Works
