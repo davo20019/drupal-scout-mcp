@@ -3746,10 +3746,6 @@ def _get_all_nodes_from_drush(
     """Get comprehensive node data via optimized drush query."""
     try:
         # Build PHP code for drush
-        type_filter = f"->condition('type', '{content_type}')" if content_type else ""
-        status_filter = "" if include_unpublished else "->condition('status', 1)"
-        limit_clause = f"->range(0, {limit})" if limit > 0 else ""
-
         php_code = f"""
         $node_storage = \\Drupal::entityTypeManager()->getStorage('node');
         $user_storage = \\Drupal::entityTypeManager()->getStorage('user');
@@ -3757,11 +3753,14 @@ def _get_all_nodes_from_drush(
 
         // Query nodes
         $query = \\Drupal::entityQuery('node')
-            ->accessCheck(FALSE)
-            {type_filter}
-            {status_filter}
-            {limit_clause}
-            ->sort('created', 'DESC');
+            ->accessCheck(FALSE);
+
+        // Add filters
+        {"$query->condition('type', '" + content_type + "');" if content_type else ""}
+        {"" if include_unpublished else "$query->condition('status', 1);"}
+        {"$query->range(0, " + str(limit) + ");" if limit > 0 else ""}
+
+        $query->sort('created', 'DESC');
 
         $nids = $query->execute();
 
