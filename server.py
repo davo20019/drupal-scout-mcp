@@ -3745,6 +3745,17 @@ def _get_all_nodes_from_drush(
 ) -> Optional[List[dict]]:
     """Get comprehensive node data via optimized drush query."""
     try:
+        # Build filters as proper PHP lines
+        filters = []
+        if content_type:
+            filters.append(f"$query->condition('type', '{content_type}');")
+        if not include_unpublished:
+            filters.append("$query->condition('status', 1);")
+        if limit > 0:
+            filters.append(f"$query->range(0, {limit});")
+
+        filters_code = "\n        ".join(filters) if filters else "// No additional filters"
+
         # Build PHP code for drush
         php_code = f"""
         $node_storage = \\Drupal::entityTypeManager()->getStorage('node');
@@ -3752,16 +3763,12 @@ def _get_all_nodes_from_drush(
         $summary_only = {str(summary_only).lower()};
 
         // Query nodes
-        $query = \\Drupal::entityQuery('node')
-            ->accessCheck(FALSE);
+        $query = \\Drupal::entityQuery('node')->accessCheck(FALSE);
 
         // Add filters
-        {"$query->condition('type', '" + content_type + "');" if content_type else ""}
-        {"" if include_unpublished else "$query->condition('status', 1);"}
-        {"$query->range(0, " + str(limit) + ");" if limit > 0 else ""}
+        {filters_code}
 
         $query->sort('created', 'DESC');
-
         $nids = $query->execute();
 
         if (empty($nids)) {{
@@ -3909,10 +3916,17 @@ def _get_all_nodes_from_drush(
 
         if result.returncode != 0:
             logger.error(f"Drush command failed: {result.stderr}")
+            logger.error(f"Drush stdout: {result.stdout}")
             return None
 
-        nodes = json.loads(result.stdout)
-        return nodes
+        # Parse the output
+        try:
+            nodes = json.loads(result.stdout)
+            return nodes
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON output: {e}")
+            logger.error(f"Raw output: {result.stdout}")
+            return None
 
     except Exception as e:
         logger.error(f"Error in _get_all_nodes_from_drush: {e}", exc_info=True)
