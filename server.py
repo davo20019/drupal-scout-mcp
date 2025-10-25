@@ -3084,7 +3084,7 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
         // DIAGNOSTIC: Get database stats
         $database = \\Drupal::database();
 
-        // Check taxonomy_index table (Drupal's term usage tracking)
+        // Check taxonomy_index table (Drupal's optional term tracking)
         $taxonomy_index_count = $database->query(
             "SELECT COUNT(*) FROM {{taxonomy_index}} WHERE tid = :tid",
             [':tid' => $tid]
@@ -3096,58 +3096,62 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
         // Find content using this term
         $node_storage = \\Drupal::entityTypeManager()->getStorage('node');
         $content_usage = [];
+        $nids_found = [];
 
-        // BETTER APPROACH: Use taxonomy_index table first (faster, more reliable)
+        // METHOD 1: Check taxonomy_index table (if populated)
         if ($taxonomy_index_count > 0) {{
             $nids = $database->query(
                 "SELECT DISTINCT nid FROM {{taxonomy_index}} WHERE tid = :tid LIMIT 20",
                 [':tid' => $tid]
             )->fetchCol();
-
             if ($nids) {{
-                $nodes = $node_storage->loadMultiple($nids);
-                foreach ($nodes as $node) {{
-                    $content_usage[] = [
-                        'nid' => (int)$node->id(),
-                        'title' => $node->getTitle(),
-                        'type' => $node->bundle()
-                    ];
-                }}
+                $nids_found = array_merge($nids_found, $nids);
             }}
         }}
 
-        // FALLBACK: Try entity reference fields (slower but catches edge cases)
-        if (empty($content_usage)) {{
-            $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
-            $fields_checked = 0;
-            $fields_with_errors = [];
+        // METHOD 2: Check field data tables directly (CRITICAL for sites that don't use taxonomy_index)
+        // Find all entity_reference fields that target taxonomy_term
+        $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
+        $fields_checked = 0;
+        $fields_found_usage = [];
 
-            foreach ($field_map['node'] ?? [] as $field_name => $field_info) {{
-                $fields_checked++;
-                try {{
-                    $nids = $node_storage->getQuery()
-                        ->condition($field_name, $tid)
-                        ->accessCheck(FALSE)
-                        ->range(0, 20)
-                        ->execute();
+        foreach ($field_map['node'] ?? [] as $field_name => $field_info) {{
+            $fields_checked++;
 
-                    if ($nids) {{
-                        $nodes = $node_storage->loadMultiple($nids);
-                        foreach ($nodes as $node) {{
-                            $content_usage[] = [
-                                'nid' => (int)$node->id(),
-                                'title' => $node->getTitle(),
-                                'type' => $node->bundle()
-                            ];
-                        }}
-                    }}
-                }} catch (\\Exception $e) {{
-                    $fields_with_errors[] = $field_name;
+            // Check if this field's table exists and query it directly
+            $table_name = 'node__' . $field_name;
+            $column_name = $field_name . '_target_id';
+
+            try {{
+                // Direct SQL query to field data table (much more reliable)
+                $field_nids = $database->query(
+                    "SELECT DISTINCT entity_id FROM {{" . $table_name . "}} WHERE " . $column_name . " = :tid LIMIT 20",
+                    [':tid' => $tid]
+                )->fetchCol();
+
+                if ($field_nids) {{
+                    $nids_found = array_merge($nids_found, $field_nids);
+                    $fields_found_usage[] = $field_name;
                 }}
+            }} catch (\\Exception $e) {{
+                // Table doesn't exist or field doesn't reference taxonomy - skip
             }}
-        }} else {{
-            $fields_checked = 0;
-            $fields_with_errors = [];
+        }}
+
+        // Remove duplicates and limit to 20
+        $nids_found = array_unique($nids_found);
+        $nids_found = array_slice($nids_found, 0, 20);
+
+        // Load the actual nodes
+        if (!empty($nids_found)) {{
+            $nodes = $node_storage->loadMultiple($nids_found);
+            foreach ($nodes as $node) {{
+                $content_usage[] = [
+                    'nid' => (int)$node->id(),
+                    'title' => $node->getTitle(),
+                    'type' => $node->bundle()
+                ];
+            }}
         }}
 
         // Get fields that reference this vocabulary
@@ -3189,8 +3193,9 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
                 'taxonomy_index_count' => (int)$taxonomy_index_count,
                 'total_nodes_in_db' => (int)$total_nodes,
                 'fields_checked' => (int)$fields_checked,
-                'fields_with_errors' => $fields_with_errors,
-                'query_method' => $taxonomy_index_count > 0 ? 'taxonomy_index' : 'entity_query'
+                'fields_found_usage' => $fields_found_usage,
+                'query_method' => $taxonomy_index_count > 0 ? 'taxonomy_index + field_data' : 'field_data_tables_only',
+                'total_nids_found' => count($nids_found)
             ]
         ];
 
