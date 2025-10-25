@@ -3661,11 +3661,25 @@ def export_nodes_to_csv(
             limit=limit,
         )
 
-        if not nodes:
+        if nodes is None:
             return json.dumps({
                 "_error": True,
-                "message": f"No nodes found{' for content type: ' + content_type if content_type else ''}",
+                "message": "Failed to fetch nodes from Drupal. Check server logs for details.",
+                "suggestion": "Verify drush is working: drush status"
             })
+
+        if not nodes or len(nodes) == 0:
+            debug_info = {
+                "_error": True,
+                "message": f"No nodes found{' for content type: ' + content_type if content_type else ''}",
+                "filters_applied": {
+                    "content_type": content_type or "all",
+                    "include_unpublished": include_unpublished,
+                    "limit": limit if limit > 0 else "no limit"
+                },
+                "suggestion": "Try running: drush ev \"echo count(\\\\Drupal::entityQuery('node')->accessCheck(FALSE)->execute());\" to verify nodes exist"
+            }
+            return json.dumps(debug_info)
 
         total_nodes = len(nodes)
         content_types = list(set(node.get("type", "") for node in nodes))
