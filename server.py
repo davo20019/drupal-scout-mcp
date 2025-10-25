@@ -2710,9 +2710,29 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
         )
 
     term = usage_data["term"]
+    diagnostics = usage_data.get("_diagnostics", {})
+
     output = [f"🏷️  Term: {term['name']} (tid: {term_id})"]
     output.append(f"   Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
     output.append(f"   📊 Data source: Live database via drush")
+
+    # Show diagnostics
+    if diagnostics:
+        output.append(f"   🔍 Query diagnostics:")
+        output.append(f"      • Database has {diagnostics.get('total_nodes_in_db', 0)} total nodes")
+        output.append(
+            f"      • taxonomy_index table: {diagnostics.get('taxonomy_index_count', 0)} references for this term"
+        )
+        if diagnostics.get("fields_checked", 0) > 0:
+            output.append(
+                f"      • Checked {diagnostics.get('fields_checked', 0)} entity reference fields"
+            )
+            if diagnostics.get("fields_with_errors"):
+                output.append(
+                    f"      • {len(diagnostics.get('fields_with_errors', []))} fields had query errors"
+                )
+        output.append(f"      • Query method: {diagnostics.get('query_method', 'unknown')}")
+
     output.append("")
 
     if term.get("description"):
@@ -3061,34 +3081,73 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
         $children = $term_storage->loadChildren($tid);
         $children_names = array_map(function($child) {{ return $child->getName(); }}, $children);
 
+        // DIAGNOSTIC: Get database stats
+        $database = \\Drupal::database();
+
+        // Check taxonomy_index table (Drupal's term usage tracking)
+        $taxonomy_index_count = $database->query(
+            "SELECT COUNT(*) FROM {{taxonomy_index}} WHERE tid = :tid",
+            [':tid' => $tid]
+        )->fetchField();
+
+        // Check total nodes
+        $total_nodes = $database->query("SELECT COUNT(*) FROM {{node_field_data}}")->fetchField();
+
         // Find content using this term
         $node_storage = \\Drupal::entityTypeManager()->getStorage('node');
         $content_usage = [];
 
-        // Get all entity reference fields targeting taxonomy terms
-        $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
+        // BETTER APPROACH: Use taxonomy_index table first (faster, more reliable)
+        if ($taxonomy_index_count > 0) {{
+            $nids = $database->query(
+                "SELECT DISTINCT nid FROM {{taxonomy_index}} WHERE tid = :tid LIMIT 20",
+                [':tid' => $tid]
+            )->fetchCol();
 
-        foreach ($field_map['node'] ?? [] as $field_name => $field_info) {{
-            try {{
-                $nids = $node_storage->getQuery()
-                    ->condition($field_name, $tid)
-                    ->accessCheck(FALSE)
-                    ->range(0, 20)
-                    ->execute();
-
-                if ($nids) {{
-                    $nodes = $node_storage->loadMultiple($nids);
-                    foreach ($nodes as $node) {{
-                        $content_usage[] = [
-                            'nid' => (int)$node->id(),
-                            'title' => $node->getTitle(),
-                            'type' => $node->bundle()
-                        ];
-                    }}
+            if ($nids) {{
+                $nodes = $node_storage->loadMultiple($nids);
+                foreach ($nodes as $node) {{
+                    $content_usage[] = [
+                        'nid' => (int)$node->id(),
+                        'title' => $node->getTitle(),
+                        'type' => $node->bundle()
+                    ];
                 }}
-            }} catch (\\Exception $e) {{
-                // Field might not reference taxonomy
             }}
+        }}
+
+        // FALLBACK: Try entity reference fields (slower but catches edge cases)
+        if (empty($content_usage)) {{
+            $field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
+            $fields_checked = 0;
+            $fields_with_errors = [];
+
+            foreach ($field_map['node'] ?? [] as $field_name => $field_info) {{
+                $fields_checked++;
+                try {{
+                    $nids = $node_storage->getQuery()
+                        ->condition($field_name, $tid)
+                        ->accessCheck(FALSE)
+                        ->range(0, 20)
+                        ->execute();
+
+                    if ($nids) {{
+                        $nodes = $node_storage->loadMultiple($nids);
+                        foreach ($nodes as $node) {{
+                            $content_usage[] = [
+                                'nid' => (int)$node->id(),
+                                'title' => $node->getTitle(),
+                                'type' => $node->bundle()
+                            ];
+                        }}
+                    }}
+                }} catch (\\Exception $e) {{
+                    $fields_with_errors[] = $field_name;
+                }}
+            }}
+        }} else {{
+            $fields_checked = 0;
+            $fields_with_errors = [];
         }}
 
         // Get fields that reference this vocabulary
@@ -3125,7 +3184,14 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
             ],
             'content_usage' => array_values($content_usage),
             'views_usage' => [],  // Would need to parse view configs
-            'referencing_fields' => $referencing_fields
+            'referencing_fields' => $referencing_fields,
+            '_diagnostics' => [
+                'taxonomy_index_count' => (int)$taxonomy_index_count,
+                'total_nodes_in_db' => (int)$total_nodes,
+                'fields_checked' => (int)$fields_checked,
+                'fields_with_errors' => $fields_with_errors,
+                'query_method' => $taxonomy_index_count > 0 ? 'taxonomy_index' : 'entity_query'
+            ]
         ];
 
         echo json_encode($result);
