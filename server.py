@@ -3060,13 +3060,23 @@ def _search_terms_from_files(
 
 @mcp.tool()
 def get_all_taxonomy_usage(
-    vocabulary: str, check_code: bool = True, max_sample_nodes: int = 5
+    vocabulary: str,
+    check_code: bool = True,
+    max_sample_nodes: int = 5,
+    limit: int = 100,
+    summary_only: bool = False,
 ) -> str:
     """
     Get comprehensive usage analysis for ALL terms in a vocabulary with one optimized query.
 
     This is MUCH more efficient than calling get_taxonomy_info() for each term individually.
     For 562 terms: approximately 5,000 tokens instead of 129,000 tokens (96% savings).
+
+    **RESPONSE SIZE LIMITS:**
+    - Default limit: 100 terms (fits well within MCP 25K token limit)
+    - For vocabularies with 100+ terms, results are automatically limited
+    - Use summary_only=True for ultra-compact output (just counts, no samples)
+    - Increase limit carefully: limit=200 may approach token limits
 
     **PERFORMANCE NOTE:**
     - Small vocabularies (1-50 terms): 5-10 seconds
@@ -3093,6 +3103,8 @@ def get_all_taxonomy_usage(
         check_code: If True, scans custom code for hardcoded term references.
                     Slower but more thorough. Default: True
         max_sample_nodes: Max number of sample nodes to return per term. Default: 5
+        limit: Max number of terms to return. Default: 100. Set to 0 for all terms (risky for large vocabs).
+        summary_only: If True, returns minimal data (no samples, descriptions, or children). Default: False
 
     Returns:
         JSON string containing array of term usage data. Each term includes:
@@ -3149,7 +3161,7 @@ def get_all_taxonomy_usage(
             )
 
         # Get all term usage data in one optimized query
-        usage_data = _get_all_terms_usage_from_drush(vocabulary, max_sample_nodes)
+        usage_data = _get_all_terms_usage_from_drush(vocabulary, max_sample_nodes, summary_only)
 
         if not usage_data:
             return json.dumps(
@@ -3160,12 +3172,36 @@ def get_all_taxonomy_usage(
                 }
             )
 
-        # Add code/config usage if requested
-        if check_code:
+        total_terms = len(usage_data)
+
+        # Apply limit if needed
+        if limit > 0 and len(usage_data) > limit:
+            usage_data = usage_data[:limit]
+            truncated = True
+        else:
+            truncated = False
+
+        # Add code/config usage if requested (only for returned terms)
+        if check_code and not summary_only:
             usage_data = _add_code_usage_to_terms(usage_data, drupal_root)
 
+        # Add metadata about results
+        result = {
+            "total_terms": total_terms,
+            "returned_terms": len(usage_data),
+            "truncated": truncated,
+            "summary_only": summary_only,
+            "terms": usage_data,
+        }
+
+        if truncated:
+            result["message"] = (
+                f"Showing {len(usage_data)} of {total_terms} terms. "
+                f"Increase limit parameter to see more, or use summary_only=True for compact output."
+            )
+
         # Return as JSON for AI to format
-        return json.dumps(usage_data, indent=2)
+        return json.dumps(result, indent=2)
 
     except Exception as e:
         logger.error(f"Error in get_all_taxonomy_usage: {e}", exc_info=True)
@@ -3173,13 +3209,14 @@ def get_all_taxonomy_usage(
 
 
 def _get_all_terms_usage_from_drush(
-    vocabulary: str, max_sample_nodes: int = 5
+    vocabulary: str, max_sample_nodes: int = 5, summary_only: bool = False
 ) -> Optional[List[dict]]:
     """Get usage data for all terms in a vocabulary via optimized drush query."""
     try:
         php_code = f"""
         $vocabulary = '{vocabulary}';
         $max_samples = {max_sample_nodes};
+        $summary_only = {str(summary_only).lower()};
 
         $term_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_term');
         $vocab_storage = \\Drupal::entityTypeManager()->getStorage('taxonomy_vocabulary');
@@ -3287,46 +3324,57 @@ def _get_all_terms_usage_from_drush(
             $nids_found = array_unique($nids_found);
             $total_content_count = count($nids_found);
 
-            // Get sample nodes (limited)
-            $sample_nids = array_slice($nids_found, 0, $max_samples);
-            $content_usage = [];
-
-            if (!empty($sample_nids)) {{
-                $nodes = $node_storage->loadMultiple($sample_nids);
-                foreach ($nodes as $node) {{
-                    $content_usage[] = [
-                        'nid' => (int)$node->id(),
-                        'title' => $node->getTitle(),
-                        'type' => $node->bundle()
-                    ];
-                }}
-            }}
-
             // Determine if safe to delete
             $safe_to_delete = ($total_content_count === 0 && empty($children_names));
-            $warnings = [];
 
-            if ($total_content_count > 0) {{
-                $warnings[] = "Used in " . $total_content_count . " content items";
-            }}
-            if (!empty($children_names)) {{
-                $warnings[] = "Has " . count($children_names) . " child terms";
-            }}
+            // Build result based on summary_only flag
+            if ($summary_only) {{
+                // Ultra-compact mode: just essentials
+                $results[] = [
+                    'tid' => $tid,
+                    'name' => $term->getName(),
+                    'count' => $total_content_count,
+                    'safe' => $safe_to_delete
+                ];
+            }} else {{
+                // Full mode: get sample nodes
+                $sample_nids = array_slice($nids_found, 0, $max_samples);
+                $content_usage = [];
 
-            $results[] = [
-                'tid' => $tid,
-                'name' => $term->getName(),
-                'description' => $term->getDescription(),
-                'vocabulary' => $vocabulary,
-                'vocabulary_label' => $vocab->label(),
-                'parent' => $parent_name,
-                'children' => array_values($children_names),
-                'content_count' => $total_content_count,
-                'content_usage' => $content_usage,
-                'fields_with_usage' => $fields_found_usage,
-                'safe_to_delete' => $safe_to_delete,
-                'warnings' => $warnings
-            ];
+                if (!empty($sample_nids)) {{
+                    $nodes = $node_storage->loadMultiple($sample_nids);
+                    foreach ($nodes as $node) {{
+                        $content_usage[] = [
+                            'nid' => (int)$node->id(),
+                            'title' => $node->getTitle(),
+                            'type' => $node->bundle()
+                        ];
+                    }}
+                }}
+
+                $warnings = [];
+                if ($total_content_count > 0) {{
+                    $warnings[] = "Used in " . $total_content_count . " content items";
+                }}
+                if (!empty($children_names)) {{
+                    $warnings[] = "Has " . count($children_names) . " child terms";
+                }}
+
+                $results[] = [
+                    'tid' => $tid,
+                    'name' => $term->getName(),
+                    'description' => $term->getDescription(),
+                    'vocabulary' => $vocabulary,
+                    'vocabulary_label' => $vocab->label(),
+                    'parent' => $parent_name,
+                    'children' => array_values($children_names),
+                    'content_count' => $total_content_count,
+                    'content_usage' => $content_usage,
+                    'fields_with_usage' => $fields_found_usage,
+                    'safe_to_delete' => $safe_to_delete,
+                    'warnings' => $warnings
+                ];
+            }}
         }}
 
         // Progress: Completion
