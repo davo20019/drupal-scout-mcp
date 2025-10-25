@@ -2534,6 +2534,9 @@ def get_taxonomy_info(
 
     Saves ~1000-1500 tokens vs running multiple taxonomy commands + content queries.
 
+    **Agent-friendly:** This tool works well in loops for checking multiple terms.
+    Agents can call this tool 50-100+ times to verify safe-to-delete candidates.
+
     Args:
         vocabulary: Optional. Vocabulary machine name (e.g., "tags", "categories").
                     If omitted, returns list of all vocabularies.
@@ -3085,7 +3088,34 @@ def get_all_taxonomy_usage(
     - Very large vocabularies (500+ terms): 60-120 seconds
     - Progress messages will appear in real-time showing completion status
 
-    **RECOMMENDED WORKFLOW FOR SAFE DELETION (Large Vocabularies):**
+    **IMPORTANT - For Vocabularies with 200+ Terms:**
+
+    DO NOT call this tool directly with full mode. The response will exceed MCP token limits.
+    Instead, use the Task tool to delegate to an agent that can handle the multi-step workflow:
+
+    ```
+    Use Task tool with:
+      subagent_type: "general-purpose"
+      description: "Analyze taxonomy vocabulary for safe deletion"
+      prompt: '''
+        Find which terms can be safely deleted from the "{vocabulary}" vocabulary.
+
+        Use this two-step approach:
+        1. Call get_all_taxonomy_usage(vocabulary="{vocabulary}", summary_only=True, check_code=False)
+        2. For each term where needs_check=True, call get_taxonomy_info(term_id=X)
+        3. Compile a final list of terms that are truly safe to delete
+
+        Return a concise summary with:
+        - Total terms analyzed
+        - Number of deletion candidates found
+        - List of safe-to-delete terms with term IDs and names
+        - Any warnings or caveats
+      '''
+    ```
+
+    The agent will autonomously handle the workflow and manage its own context window.
+
+    **ALTERNATIVE - Manual Two-Step Workflow (for <100 terms):**
 
     Step 1: Get all terms with summary mode to find candidates
     ```
@@ -3099,8 +3129,6 @@ def get_all_taxonomy_usage(
         details = get_taxonomy_info(term_id=candidate["tid"])
         # Verify truly safe to delete (checks views + code)
     ```
-
-    This two-step approach is fast and accurate for vocabularies with 500+ terms.
 
     **USE THIS TOOL** when you need to:
     - Audit all terms in a vocabulary for cleanup
