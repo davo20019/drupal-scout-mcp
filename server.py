@@ -3088,47 +3088,50 @@ def get_all_taxonomy_usage(
     - Very large vocabularies (500+ terms): 60-120 seconds
     - Progress messages will appear in real-time showing completion status
 
-    **IMPORTANT - For Vocabularies with 200+ Terms:**
+    **RECOMMENDED WORKFLOW - For Vocabularies with 200+ Terms:**
 
     DO NOT call this tool directly with full mode. The response will exceed MCP token limits.
-    Instead, use the Task tool to delegate to an agent that can handle the multi-step workflow:
+    Instead, use this optimized two-phase approach:
 
-    ```
-    Use Task tool with:
-      subagent_type: "general-purpose"
-      description: "Analyze taxonomy vocabulary for safe deletion"
-      prompt: '''
-        Find which terms can be safely deleted from the "{vocabulary}" vocabulary.
-
-        Use this two-step approach:
-        1. Call get_all_taxonomy_usage(vocabulary="{vocabulary}", summary_only=True, check_code=False)
-        2. For each term where needs_check=True, call get_taxonomy_info(term_id=X)
-        3. Compile a final list of terms that are truly safe to delete
-
-        Return a concise summary with:
-        - Total terms analyzed
-        - Number of deletion candidates found
-        - List of safe-to-delete terms with term IDs and names
-        - Any warnings or caveats
-      '''
-    ```
-
-    The agent will autonomously handle the workflow and manage its own context window.
-
-    **ALTERNATIVE - Manual Two-Step Workflow (for <100 terms):**
-
-    Step 1: Get all terms with summary mode to find candidates
+    **Phase 1: Get candidates yourself (fast, ~5-10K tokens)**
     ```
     result = get_all_taxonomy_usage(vocabulary="topics", summary_only=True, check_code=False)
     candidates = [term for term in result["terms"] if term["needs_check"] == True]
+
+    # Show user: "Found {total_terms} terms, {len(candidates)} candidates for deletion"
     ```
 
-    Step 2: Deep-check each candidate for views/code usage
+    **Phase 2: Delegate deep-checking to Task agent**
     ```
-    for candidate in candidates:
-        details = get_taxonomy_info(term_id=candidate["tid"])
-        # Verify truly safe to delete (checks views + code)
+    If len(candidates) > 20:
+        Use Task tool with:
+          subagent_type: "general-purpose"
+          description: "Deep-check taxonomy term candidates"
+          prompt: '''
+            Verify which of these taxonomy terms are truly safe to delete: {candidate_ids}
+
+            For each term ID, call get_taxonomy_info(term_id=X) to check:
+            - Content usage (should already be 0)
+            - Views usage
+            - Custom code references
+            - Config file references
+
+            Return a concise list of:
+            - Terms that are SAFE to delete (with term ID and name)
+            - Terms that are NOT safe (with reason why)
+          '''
+
+    Else if len(candidates) <= 20:
+        # Few candidates, check them yourself without agent
+        for candidate in candidates:
+            details = get_taxonomy_info(term_id=candidate["tid"])
     ```
+
+    **Benefits of this approach:**
+    - User sees candidate count immediately (good UX)
+    - Agent only handles the slow part (deep checks)
+    - If <20 candidates, no need for agent overhead
+    - Agent can be split into multiple if too many candidates
 
     **USE THIS TOOL** when you need to:
     - Audit all terms in a vocabulary for cleanup
