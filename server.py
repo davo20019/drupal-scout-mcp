@@ -3085,6 +3085,23 @@ def get_all_taxonomy_usage(
     - Very large vocabularies (500+ terms): 60-120 seconds
     - Progress messages will appear in real-time showing completion status
 
+    **RECOMMENDED WORKFLOW FOR SAFE DELETION (Large Vocabularies):**
+
+    Step 1: Get all terms with summary mode to find candidates
+    ```
+    result = get_all_taxonomy_usage(vocabulary="topics", summary_only=True, check_code=False)
+    candidates = [term for term in result["terms"] if term["needs_check"] == True]
+    ```
+
+    Step 2: Deep-check each candidate for views/code usage
+    ```
+    for candidate in candidates:
+        details = get_taxonomy_info(term_id=candidate["tid"])
+        # Verify truly safe to delete (checks views + code)
+    ```
+
+    This two-step approach is fast and accurate for vocabularies with 500+ terms.
+
     **USE THIS TOOL** when you need to:
     - Audit all terms in a vocabulary for cleanup
     - Generate CSV/table of term usage across entire vocabulary
@@ -3092,9 +3109,11 @@ def get_all_taxonomy_usage(
     - Analyze term usage patterns
 
     The tool performs:
-    1. Database queries to find content/views using each term
-    2. Code scanning to find hardcoded term IDs/names (optional)
-    3. Config file scanning for term references (optional)
+    1. Database queries to find content using each term
+    2. Code scanning to find hardcoded term IDs/names (optional, if check_code=True)
+    3. Config file scanning for term references (optional, if check_code=True)
+
+    Note: Views analysis not included in batch mode. Use get_taxonomy_info(term_id=X) for views checking.
 
     Returns structured JSON data that AI can format as CSV, markdown table, or any format.
 
@@ -3107,15 +3126,30 @@ def get_all_taxonomy_usage(
         summary_only: If True, returns minimal data (no samples, descriptions, or children). Default: False
 
     Returns:
-        JSON string containing array of term usage data. Each term includes:
+        JSON string with metadata and term data:
+        {
+            "total_terms": 562,
+            "returned_terms": 100,
+            "truncated": true/false,
+            "summary_only": true/false,
+            "message": "..." (if truncated),
+            "terms": [...]
+        }
+
+        In summary_only mode, each term includes:
+        - tid: Term ID
+        - name: Term name
+        - count: Number of content items using this term
+        - needs_check: TRUE if 0 content usage (candidate for deletion, needs full check)
+
+        In full mode, each term includes:
         - tid, name, description, parent, children
         - content_usage: [{nid, title, type}, ...] (sample nodes)
         - content_count: Total number of content items using this term
-        - views_usage: [{view_id, view_label, usage_type}, ...]
         - code_usage: [{file, line, context}, ...] (if check_code=True)
         - config_usage: [{config_name, config_type}, ...] (if check_code=True)
-        - referencing_fields: Fields that can reference this vocabulary
-        - safe_to_delete: boolean
+        - fields_with_usage: List of field names where term is used
+        - safe_to_delete: boolean (content + code + config analysis)
         - warnings: List of reasons why deletion might be problematic
 
     Example response format:
@@ -3330,11 +3364,12 @@ def _get_all_terms_usage_from_drush(
             // Build result based on summary_only flag
             if ($summary_only) {{
                 // Ultra-compact mode: just essentials
+                // Note: 'needs_check' indicates this is content-only analysis
                 $results[] = [
                     'tid' => $tid,
                     'name' => $term->getName(),
                     'count' => $total_content_count,
-                    'safe' => $safe_to_delete
+                    'needs_check' => $safe_to_delete  // TRUE = candidate for deletion, needs full check
                 ];
             }} else {{
                 // Full mode: get sample nodes
