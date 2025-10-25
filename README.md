@@ -1,22 +1,25 @@
 # Drupal Scout MCP
 
-A Model Context Protocol server providing comprehensive Drupal analysis through intelligent data gathering and drush integration. Gives AI assistants deep knowledge of your Drupal site's structure, configuration, and the drupal.org ecosystem.
+A Model Context Protocol server for local Drupal development. Combines local file indexing with drush-powered database queries to give AI assistants knowledge of your site's structure, content, and the drupal.org ecosystem.
+
+**Designed for local development environments** (DDEV, Lando, Docker, etc.)
 
 **Why use Drupal Scout?**
-- **Saves tokens**: Single MCP calls replace multiple drush commands + greps, significantly reducing token usage
-- **Faster responses**: Pre-processed data returns instantly vs chaining multiple commands
-- **Better context**: Combines file configs + database state + usage analysis in one response
-- **Smarter decisions**: Cross-references data (e.g., shows what depends on a module before uninstall)
+- **Reduces AI back-and-forth**: One MCP call instead of multiple drush + grep commands
+- **Bypasses token limits**: Export thousands of nodes/users/terms to CSV files
+- **Combines multiple data sources**: File analysis + database queries + drupal.org API in single responses
+- **Safe decision-making**: Shows dependencies and usage before changes
 
 **What it does:**
-- **Analyzes** your Drupal installation with Drush-powered live database queries
-- **Combines** static file analysis with active configuration data
-- **Searches** drupal.org for modules, issues, and solutions
-- **Provides** actionable insights for safe decision-making
+- **Local indexing**: Searches your codebase for modules, services, routes, hooks
+- **Database queries**: Runs drush php:eval to fetch entities, fields, views, taxonomy, logs
+- **CSV exports**: Writes large datasets (nodes, users, taxonomy) directly to files
+- **Drupal.org search**: Finds modules, issues, and compatibility info
+- **Read-only**: Only queries data, never modifies your site
 
 **What it doesn't do:**
-- Execute drush/composer commands (your AI handles that based on MCP data)
-- Modify your site directly (read-only analysis)
+- Modify files or database (AI executes drush/composer commands for changes)
+- Real-time updates (call reindex_modules after installing/removing modules)
 
 ## Features
 
