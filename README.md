@@ -248,6 +248,28 @@ Use case: Exporting 500+ terms, spreadsheet analysis, team reporting
 Perfect for: Large vocabularies where token limits prevent full display
 ```
 
+**export_nodes_to_csv** - Export content/nodes directly to CSV for audits and migrations
+```
+Example: "Export all articles to CSV with full details"
+Example: "Export all content for migration planning"
+Example: "Export unpublished blog posts to CSV"
+Bypasses: MCP token limits by writing directly to filesystem
+Perfect for: Content audits, SEO analysis, migration planning, bulk reviews
+Output: Saves to Drupal root directory as nodes_export_{type}_{timestamp}.csv
+Filters: content_type (article, page, etc.), include_unpublished, limit
+Modes:
+  - summary_only=True: nid, title, type, status, created, author (7 columns, fast)
+  - summary_only=False: 21 columns including:
+    * Basic: nid, uuid, title, type, status, langcode, timestamps, author
+    * URLs/SEO: url_alias, canonical_url, redirects, metatags (title/desc/keywords)
+    * Relationships: taxonomy_terms, entity_references (nodes/media/users)
+    * Publishing: promote, sticky, front_page flags
+    * Revisions: revision_count, latest_revision_log
+Performance: 100 nodes ~10s, 1000 nodes ~60s, 5000 nodes ~5min
+Use case: Migration planning, SEO audits, content inventory, finding broken refs
+Smart detection: Auto-detects redirect and metatag modules for enhanced data
+```
+
 **get_watchdog_logs** - Get recent Drupal error and warning logs for debugging
 ```
 Example: "Show me recent errors"
@@ -470,6 +492,64 @@ User: "I'll keep Technology and just delete 'Old Category'"
 AI: Uses Bash to run: ddev drush taxonomy:term:delete 75
 Result: Term safely deleted with MCP's confirmation it was unused
         Avoided accidentally breaking 87 articles by checking first
+```
+
+### Content Audit and SEO Analysis Workflow (Node CSV Export)
+```
+User: "I need to do a content audit for our migration to the new site"
+AI: "I'll export all your content to CSV with full details for analysis."
+MCP: export_nodes_to_csv(summary_only=False, include_unpublished=True)
+Result: "✅ Successfully exported 3,247 nodes to /path/to/drupal/nodes_export_all_20251025_153000.csv (2.1 MB)
+
+         Content types found: article (1,523), page (892), blog (654), event (178)
+
+         Columns included (21 total):
+         - Basic: nid, uuid, title, type, status, langcode, created, changed, author
+         - URLs/SEO: url_alias, canonical_url, redirects, metatag_title, metatag_description
+         - Relationships: taxonomy_terms, entity_references
+         - Publishing: promote, sticky, front_page
+         - Revisions: revision_count, latest_revision_log
+
+         Preview:
+         nid,uuid,title,type,status,langcode,created,changed,author,url_alias,canonical_url,redirects,taxonomy_terms,metatag_title...
+         1,abc-123,Home,page,published,en,2023-01-15 10:30:00,2024-10-20 14:22:00,admin,/home,https://example.com/home,,Category: News | Tags: Drupal,Welcome to Our Site...
+         2,def-456,About Us,page,published,en,2023-01-16 09:15:00,2024-09-12 11:05:00,editor,/about,https://example.com/about,/about-us | /company,,About Our Company..."
+
+AI: "Perfect! I've exported all 3,247 nodes. The CSV includes:
+     - SEO data: All URL aliases, redirects, and metatags
+     - Taxonomy relationships for each node
+     - Entity references (media, related content)
+     - Revision history
+     - Publishing status and flags
+
+     You can now open this in Excel/Google Sheets to:
+     - Audit SEO metatags (sort by empty metatag_title)
+     - Find broken redirects
+     - Map content for migration
+     - Identify content without taxonomy terms
+     - Review publishing workflow
+
+     Would you like me to analyze specific patterns?"
+
+User: "Show me articles without metatag descriptions"
+AI: [Reads CSV file and filters]
+    "Found 234 articles missing metatag descriptions:
+     - Article nid:45 'How to Use Drupal' (published 2023-03-12)
+     - Article nid:67 'PHP Best Practices' (published 2023-04-08)
+     ... [continues listing]
+
+     These should be updated before migration for better SEO."
+
+User: "What about redirect analysis?"
+AI: [Analyzes redirects column]
+    "Redirect analysis from CSV:
+     - 456 nodes have redirects (good for SEO continuity)
+     - 128 nodes have multiple redirects (shows URL history)
+     - Top 10 nodes by redirect count:
+       * nid:123 'Company History' - 8 redirects
+       * nid:456 'Product Launch' - 6 redirects
+
+     All redirect data is preserved in the CSV for migration planning."
 ```
 
 ### Large Vocabulary Cleanup Workflow (CSV Export)

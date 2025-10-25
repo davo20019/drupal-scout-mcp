@@ -70,3 +70,6 @@ htmlcov/
 
 # Taxonomy exports
 taxonomy_export_*.csv
+
+# Node/content exports
+nodes_export_*.csv
