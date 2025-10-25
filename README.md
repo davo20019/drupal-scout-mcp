@@ -267,12 +267,19 @@ Modes:
     * Publishing: promote, sticky, front_page flags
     * Revisions: revision_count, latest_revision_log
   - include_field_data=True: Adds actual field content (use with summary_only=False)
+    **WHY USE THIS:**
+    - Migration planning: Map old field values to new structure
+    - Content quality audit: Find empty fields, missing alt text
+    - Data cleanup: Identify fields that need updating
+    - SEO review: Check body text length, image descriptions
+    - Translation prep: Export content for translation services
+    **WHAT YOU GET:**
     * body: First 500 characters of body text (HTML stripped)
     * body_format: Text format (full_html, basic_html, etc.)
     * Images: Alt text + image count (field_image: "Logo image | 3 images total")
-    * Text/Link fields: Full values
-    * Custom fields: Auto-detected and included
-    * Performance: Adds 30-50% to export time
+    * Text/Link fields: Full values (perfect for link audits)
+    * Custom fields: Auto-detected and included (field_subtitle, field_author_bio, etc.)
+    * Performance: Adds 30-50% to export time but essential for migrations
 Performance: 100 nodes ~10s, 1000 nodes ~60s, 5000 nodes ~5min
 Use case: Migration planning, SEO audits, content inventory, finding broken refs
 Smart detection: Auto-detects redirect and metatag modules for enhanced data
@@ -559,6 +566,78 @@ AI: [Analyzes redirects column]
        * nid:456 'Product Launch' - 6 redirects
 
      All redirect data is preserved in the CSV for migration planning."
+```
+
+### Migration Planning with Field Data Export
+```
+User: "I need to export all blog posts with their field content for our migration to the new CMS"
+AI: "I'll export all blog posts including field data (body text, images, custom fields)."
+MCP: export_nodes_to_csv(content_type="blog", summary_only=False, include_field_data=True, include_unpublished=True)
+Result: "✅ Successfully exported 654 blog nodes to /path/to/drupal/nodes_export_blog_20251025_160000.csv (892 KB)
+
+         Columns included (32 total):
+         - Basic: nid, uuid, title, type, status, author...
+         - URLs/SEO: url_alias, canonical_url, metatags...
+         - Field Data:
+           * body (first 500 chars)
+           * body_format
+           * field_featured_image (alt text + count)
+           * field_author_bio
+           * field_publish_date
+           * field_related_links
+           * field_tags (auto-detected custom field)
+           * field_subtitle (auto-detected)
+
+         Preview:
+         nid,title,body,body_format,field_featured_image,field_author_bio,field_subtitle...
+         123,How to Migrate,"This comprehensive guide covers...(500 chars),full_html,"Migration guide banner | 3 images",John Doe is a...,The Ultimate Guide..."
+
+AI: "Perfect! I've exported all 654 blog posts with complete field data. The CSV includes:
+
+     **Content Data:**
+     - Body text (first 500 chars) - ready for content analysis
+     - Body format - shows which posts use full_html vs basic_html
+     - Image alt text - identify missing accessibility data
+     - Custom fields - all detected and exported
+
+     **What you can do now:**
+     1. Content Quality Audit:
+        - Sort by empty 'body' to find placeholder content
+        - Find posts missing field_featured_image
+        - Check for missing alt text descriptions
+
+     2. Migration Mapping:
+        - Map field_subtitle → new_cms_field_intro
+        - Map field_author_bio → author.biography
+        - Identify which body_format to convert
+
+     3. Translation Preparation:
+        - Export body text for translation services
+        - See which fields need localization
+
+     4. SEO/Content Review:
+        - Check body text length (too short?)
+        - Find posts without field_subtitle
+        - Identify missing metadata"
+
+User: "Show me posts with short body text that need more content"
+AI: [Analyzes CSV body column]
+    "Found 47 blog posts with body text under 100 characters:
+     - nid:234 'Quick Update' - 45 chars ('Just a quick note about...')
+     - nid:567 'Announcement' - 78 chars ('We're excited to share that...')
+
+     These posts might be placeholders or need expansion before migration."
+
+User: "What about missing image alt text?"
+AI: [Checks field_featured_image column]
+    "Image analysis:
+     - 589 posts have featured images
+     - 123 posts missing alt text (empty field_featured_image)
+     - Posts to fix:
+       * nid:89 'Product Launch' - 2 images, no alt text
+       * nid:145 'Case Study' - 1 image, no alt text
+
+     You should add alt text to these before migration for accessibility."
 ```
 
 ### Large Vocabulary Cleanup Workflow (CSV Export)
