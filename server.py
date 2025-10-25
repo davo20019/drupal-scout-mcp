@@ -153,21 +153,30 @@ def _detect_drush_command() -> Optional[List[str]]:
     return None
 
 
-def run_drush_command(args: List[str], timeout: int = 30):
+def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool = False):
     """
     Run a drush command and return JSON output.
 
     Args:
         args: Drush command arguments (e.g., ["pm:list", "--format=json"])
         timeout: Command timeout in seconds
+        return_raw_error: If True, return dict with error info instead of None
 
     Returns:
         Parsed JSON output (dict or list) or None if command failed
+        If return_raw_error=True and error occurs, returns:
+        {"_error": True, "_error_type": "...", "_error_message": "..."}
     """
     drush_cmd = get_drush_command()
 
     if not drush_cmd:
         logger.error("Cannot run drush command: drush not found")
+        if return_raw_error:
+            return {
+                "_error": True,
+                "_error_type": "drush_not_found",
+                "_error_message": "Drush not found",
+            }
         return None
 
     drupal_root = Path(config.get("drupal_root"))
@@ -176,15 +185,17 @@ def run_drush_command(args: List[str], timeout: int = 30):
     try:
         logger.debug(f"Running: {' '.join(full_cmd)}")
         result = subprocess.run(
-            full_cmd,
-            cwd=str(drupal_root),
-            capture_output=True,
-            text=True,
-            timeout=timeout
+            full_cmd, cwd=str(drupal_root), capture_output=True, text=True, timeout=timeout
         )
 
         if result.returncode != 0:
             logger.error(f"Drush command failed: {result.stderr}")
+            if return_raw_error:
+                return {
+                    "_error": True,
+                    "_error_type": "drush_failed",
+                    "_error_message": result.stderr.strip(),
+                }
             return None
 
         if result.stdout.strip():
@@ -194,14 +205,79 @@ def run_drush_command(args: List[str], timeout: int = 30):
 
     except subprocess.TimeoutExpired:
         logger.error(f"Drush command timed out after {timeout}s")
+        if return_raw_error:
+            return {
+                "_error": True,
+                "_error_type": "timeout",
+                "_error_message": f"Command timed out after {timeout}s",
+            }
         return None
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse drush JSON output: {e}")
         logger.error(f"Output was: {result.stdout[:200]}")
+        if return_raw_error:
+            return {"_error": True, "_error_type": "json_parse", "_error_message": str(e)}
         return None
     except Exception as e:
         logger.error(f"Error running drush command: {e}")
+        if return_raw_error:
+            return {"_error": True, "_error_type": "unknown", "_error_message": str(e)}
         return None
+
+
+def verify_database_connection() -> tuple[bool, str]:
+    """
+    Verify that we can connect to the Drupal database via drush.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    result = run_drush_command(["status", "--format=json"], timeout=10, return_raw_error=True)
+
+    if not result:
+        return False, "Drush status command returned no data"
+
+    if isinstance(result, dict) and result.get("_error"):
+        error_type = result.get("_error_type", "unknown")
+        error_msg = result.get("_error_message", "Unknown error")
+        return False, f"Drush error ({error_type}): {error_msg}"
+
+    # Check database status in drush status output
+    db_status = result.get("db-status")
+    if db_status == "Connected":
+        return True, "Database connected"
+    elif db_status:
+        return False, f"Database status: {db_status}"
+    else:
+        # db-status not in output, try a simple query
+        test_result = run_drush_command(["ev", "echo 'OK';"], timeout=5)
+        if test_result is None:
+            return False, "Cannot execute PHP via drush"
+        return True, "Database connection assumed (drush working)"
+
+
+def check_module_enabled(module_name: str) -> bool:
+    """
+    Check if a specific module is enabled.
+
+    Args:
+        module_name: Machine name of the module (e.g., 'dblog', 'views')
+
+    Returns:
+        True if module is enabled, False otherwise
+    """
+    result = run_drush_command(["pm:list", "--format=json", "--status=enabled"])
+
+    if not result or not isinstance(result, dict):
+        return False
+
+    # Check if module exists and is enabled
+    module_info = result.get(module_name)
+    if not module_info:
+        return False
+
+    status = module_info.get("status", "").lower()
+    return status == "enabled"
 
 
 @mcp.tool()
@@ -1417,7 +1493,7 @@ def get_entity_structure(entity_type: str) -> str:
         # Group by bundle
         bundles = {}
         for field in field_configs:
-            bundle = field['bundle']
+            bundle = field["bundle"]
             if bundle not in bundles:
                 bundles[bundle] = []
             bundles[bundle].append(field)
@@ -1425,9 +1501,9 @@ def get_entity_structure(entity_type: str) -> str:
         for bundle, fields in bundles.items():
             output.append(f"### Bundle: `{bundle}` ({len(fields)} fields)\n")
             for field in fields[:15]:  # Limit to avoid token overload
-                field_name = field['field_name']
-                field_type = field.get('type', 'unknown')
-                required = "required" if field.get('required') else "optional"
+                field_name = field["field_name"]
+                field_type = field.get("type", "unknown")
+                required = "required" if field.get("required") else "optional"
                 output.append(f"- **`{field_name}`** ({field_type}, {required})")
 
             if len(fields) > 15:
@@ -1442,7 +1518,7 @@ def get_entity_structure(entity_type: str) -> str:
         output.append(f"## View Displays ({len(view_displays)})\n")
         for display in view_displays[:10]:
             output.append(f"- **`{display['bundle']}.{display['mode']}`**")
-            if display.get('fields'):
+            if display.get("fields"):
                 output.append(f"  Fields: {', '.join(display['fields'][:5])}")
         if len(view_displays) > 10:
             output.append(f"*... and {len(view_displays) - 10} more displays*\n")
@@ -1452,7 +1528,7 @@ def get_entity_structure(entity_type: str) -> str:
         output.append(f"\n## Form Displays ({len(form_displays)})\n")
         for display in form_displays[:10]:
             output.append(f"- **`{display['bundle']}.{display['mode']}`**")
-            if display.get('widgets'):
+            if display.get("widgets"):
                 output.append(f"  Widgets: {', '.join(display['widgets'][:5])}")
         if len(form_displays) > 10:
             output.append(f"*... and {len(form_displays) - 10} more displays*")
@@ -1506,10 +1582,10 @@ def _get_field_configs(entity_type: str, drupal_root: Path) -> List[dict]:
     logger.debug("Drush unavailable, falling back to file-based config parsing")
 
     config_locations = [
-        drupal_root / "config" / "sync",           # Standard config sync
-        drupal_root / "config" / "default",        # Default config
+        drupal_root / "config" / "sync",  # Standard config sync
+        drupal_root / "config" / "default",  # Default config
         drupal_root / "sites" / "default" / "config" / "sync",  # Sites-specific
-        drupal_root / "recipes",                   # Drupal CMS recipes
+        drupal_root / "recipes",  # Drupal CMS recipes
     ]
 
     # Look for field.field.{entity_type}.*.yml files
@@ -1523,17 +1599,20 @@ def _get_field_configs(entity_type: str, drupal_root: Path) -> List[dict]:
         for config_file in config_dir.rglob(pattern):
             try:
                 import yaml
-                with open(config_file, 'r') as f:
+
+                with open(config_file, "r") as f:
                     config = yaml.safe_load(f)
 
                     if config:
-                        fields.append({
-                            'field_name': config.get('field_name'),
-                            'bundle': config.get('bundle'),
-                            'type': config.get('field_type'),
-                            'required': config.get('required', False),
-                            'label': config.get('label')
-                        })
+                        fields.append(
+                            {
+                                "field_name": config.get("field_name"),
+                                "bundle": config.get("bundle"),
+                                "type": config.get("field_type"),
+                                "required": config.get("required", False),
+                                "label": config.get("label"),
+                            }
+                        )
             except Exception as e:
                 logger.debug(f"Error parsing {config_file}: {e}")
                 continue
@@ -1614,27 +1693,25 @@ def _get_display_configs(entity_type: str, display_type: str, drupal_root: Path)
         for config_file in config_dir.rglob(pattern):
             try:
                 import yaml
-                with open(config_file, 'r') as f:
+
+                with open(config_file, "r") as f:
                     config = yaml.safe_load(f)
 
                     if config:
                         # Extract bundle and mode from filename
                         # e.g., core.entity_view_display.node.article.default.yml
-                        parts = config_file.stem.split('.')
-                        bundle = parts[2] if len(parts) > 2 else 'unknown'
-                        mode = parts[3] if len(parts) > 3 else 'default'
+                        parts = config_file.stem.split(".")
+                        bundle = parts[2] if len(parts) > 2 else "unknown"
+                        mode = parts[3] if len(parts) > 3 else "default"
 
-                        display_info = {
-                            'bundle': bundle,
-                            'mode': mode
-                        }
+                        display_info = {"bundle": bundle, "mode": mode}
 
                         # Extract field list
-                        content = config.get('content', {})
-                        if display_type == 'view':
-                            display_info['fields'] = list(content.keys())
+                        content = config.get("content", {})
+                        if display_type == "view":
+                            display_info["fields"] = list(content.keys())
                         else:  # form
-                            display_info['widgets'] = list(content.keys())
+                            display_info["widgets"] = list(content.keys())
 
                         displays.append(display_info)
             except Exception as e:
@@ -1749,18 +1826,20 @@ def get_views_summary(view_name: Optional[str] = None, entity_type: Optional[str
             output.append(f"   Description: {view.get('description', 'No description')}")
             output.append("")
 
-            displays = view.get('displays', [])
+            displays = view.get("displays", [])
             if displays:
                 output.append(f"   Displays ({len(displays)}):")
                 for display in displays:
                     output.append(f"   • {display['display_title']} [{display['display_plugin']}]")
-                    if display.get('path'):
+                    if display.get("path"):
                         output.append(f"     Path: {display['path']}")
-                    if display.get('filters'):
+                    if display.get("filters"):
                         output.append(f"     Filters: {', '.join(display['filters'])}")
-                    if display.get('fields'):
-                        output.append(f"     Fields: {', '.join(display['fields'][:5])}{'...' if len(display['fields']) > 5 else ''}")
-                    if display.get('relationships'):
+                    if display.get("fields"):
+                        output.append(
+                            f"     Fields: {', '.join(display['fields'][:5])}{'...' if len(display['fields']) > 5 else ''}"
+                        )
+                    if display.get("relationships"):
                         output.append(f"     Relationships: {', '.join(display['relationships'])}")
                     output.append("")
         else:
@@ -1771,16 +1850,16 @@ def get_views_summary(view_name: Optional[str] = None, entity_type: Optional[str
             output.append(header + "\n")
 
             for view in views_data:
-                status_icon = "✅" if view.get('status') else "❌"
+                status_icon = "✅" if view.get("status") else "❌"
                 output.append(f"{status_icon} {view['label']} ({view['id']})")
 
-                displays = view.get('displays', [])
+                displays = view.get("displays", [])
                 if displays:
-                    display_types = [d['display_plugin'] for d in displays]
+                    display_types = [d["display_plugin"] for d in displays]
                     output.append(f"   Displays: {', '.join(display_types)}")
 
                 # Show base table for context
-                base_table = view.get('base_table', '')
+                base_table = view.get("base_table", "")
                 if base_table:
                     output.append(f"   Base: {base_table}")
 
@@ -1815,14 +1894,14 @@ def _filter_views_by_entity_type(views_data: List[dict], entity_type: str) -> Li
     """
     # Map entity types to possible base table names
     entity_type_mappings = {
-        'node': ['node', 'node_field_data', 'node_revision'],
-        'users': ['users', 'users_field_data'],
-        'user': ['users', 'users_field_data'],  # Accept both singular/plural
-        'taxonomy_term': ['taxonomy_term_data', 'taxonomy_term_field_data'],
-        'media': ['media', 'media_field_data'],
-        'comment': ['comment', 'comment_field_data'],
-        'file': ['file_managed'],
-        'block_content': ['block_content', 'block_content_field_data'],
+        "node": ["node", "node_field_data", "node_revision"],
+        "users": ["users", "users_field_data"],
+        "user": ["users", "users_field_data"],  # Accept both singular/plural
+        "taxonomy_term": ["taxonomy_term_data", "taxonomy_term_field_data"],
+        "media": ["media", "media_field_data"],
+        "comment": ["comment", "comment_field_data"],
+        "file": ["file_managed"],
+        "block_content": ["block_content", "block_content_field_data"],
     }
 
     # Get possible base tables for this entity type
@@ -1831,7 +1910,7 @@ def _filter_views_by_entity_type(views_data: List[dict], entity_type: str) -> Li
     # Filter views
     filtered = []
     for view in views_data:
-        base_table = view.get('base_table', '').lower()
+        base_table = view.get("base_table", "").lower()
 
         # Check if base table matches any of the possible tables
         if any(table in base_table for table in possible_tables):
@@ -1956,53 +2035,56 @@ def _get_views_from_files(view_name: Optional[str], drupal_root: Path) -> List[d
         for config_file in config_dir.rglob(pattern):
             try:
                 import yaml
-                with open(config_file, 'r') as f:
+
+                with open(config_file, "r") as f:
                     config = yaml.safe_load(f)
 
                 if not config:
                     continue
 
                 view_config = {
-                    'id': config.get('id', 'unknown'),
-                    'label': config.get('label', 'Unknown'),
-                    'status': config.get('status', False),
-                    'description': config.get('description', ''),
-                    'base_table': config.get('base_table', ''),
-                    'displays': []
+                    "id": config.get("id", "unknown"),
+                    "label": config.get("label", "Unknown"),
+                    "status": config.get("status", False),
+                    "description": config.get("description", ""),
+                    "base_table": config.get("base_table", ""),
+                    "displays": [],
                 }
 
                 # Parse displays
-                displays = config.get('display', {})
+                displays = config.get("display", {})
                 for display_id, display_data in displays.items():
                     display_info = {
-                        'id': display_id,
-                        'display_plugin': display_data.get('display_plugin', 'unknown'),
-                        'display_title': display_data.get('display_title', display_id),
-                        'path': None,
-                        'filters': [],
-                        'fields': [],
-                        'relationships': []
+                        "id": display_id,
+                        "display_plugin": display_data.get("display_plugin", "unknown"),
+                        "display_title": display_data.get("display_title", display_id),
+                        "path": None,
+                        "filters": [],
+                        "fields": [],
+                        "relationships": [],
                     }
 
-                    display_options = display_data.get('display_options', {})
+                    display_options = display_data.get("display_options", {})
 
                     # Get path
-                    if 'path' in display_options:
-                        display_info['path'] = display_options['path']
+                    if "path" in display_options:
+                        display_info["path"] = display_options["path"]
 
                     # Get filters
-                    if 'filters' in display_options:
-                        display_info['filters'] = list(display_options['filters'].keys())
+                    if "filters" in display_options:
+                        display_info["filters"] = list(display_options["filters"].keys())
 
                     # Get fields
-                    if 'fields' in display_options:
-                        display_info['fields'] = list(display_options['fields'].keys())
+                    if "fields" in display_options:
+                        display_info["fields"] = list(display_options["fields"].keys())
 
                     # Get relationships
-                    if 'relationships' in display_options:
-                        display_info['relationships'] = list(display_options['relationships'].keys())
+                    if "relationships" in display_options:
+                        display_info["relationships"] = list(
+                            display_options["relationships"].keys()
+                        )
 
-                    view_config['displays'].append(display_info)
+                    view_config["displays"].append(display_info)
 
                 views_data.append(view_config)
 
@@ -2080,7 +2162,7 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
             output.append(f"   Entity Type: {field.get('entity_type', 'Unknown')}")
 
             # Storage info
-            cardinality = field.get('cardinality', 1)
+            cardinality = field.get("cardinality", 1)
             if cardinality == -1:
                 output.append(f"   Storage: Unlimited values")
             elif cardinality == 1:
@@ -2090,16 +2172,16 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
 
             # Settings
             settings_parts = []
-            if field.get('required'):
+            if field.get("required"):
                 settings_parts.append("Required")
-            if field.get('translatable'):
+            if field.get("translatable"):
                 settings_parts.append("Translatable")
 
-            max_length = field.get('max_length')
+            max_length = field.get("max_length")
             if max_length:
                 settings_parts.append(f"Max length: {max_length}")
 
-            target_type = field.get('target_type')
+            target_type = field.get("target_type")
             if target_type:
                 settings_parts.append(f"References: {target_type}")
 
@@ -2107,16 +2189,16 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
                 output.append(f"   Settings: {', '.join(settings_parts)}")
 
             # Usage across bundles
-            bundles = field.get('bundles', [])
+            bundles = field.get("bundles", [])
             if bundles:
                 output.append(f"\n   Used in {len(bundles)} bundle(s):")
                 for bundle in bundles:
-                    bundle_label = bundle.get('bundle_label', bundle.get('bundle', 'Unknown'))
-                    req_indicator = " (required)" if bundle.get('required') else ""
+                    bundle_label = bundle.get("bundle_label", bundle.get("bundle", "Unknown"))
+                    req_indicator = " (required)" if bundle.get("required") else ""
                     output.append(f"   • {bundle_label}{req_indicator}")
 
             # Description if available
-            description = field.get('description')
+            description = field.get("description")
             if description:
                 output.append(f"\n   Description: {description}")
 
@@ -2132,22 +2214,22 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
             # Group by entity type for better readability
             by_entity_type = {}
             for field in fields_data:
-                et = field.get('entity_type', 'unknown')
+                et = field.get("entity_type", "unknown")
                 if et not in by_entity_type:
                     by_entity_type[et] = []
                 by_entity_type[et].append(field)
 
             for et, fields in sorted(by_entity_type.items()):
                 output.append(f"📦 {et.upper()}:")
-                for field in sorted(fields, key=lambda f: f['field_name']):
-                    bundles = field.get('bundles', [])
-                    bundle_names = [b.get('bundle', '') for b in bundles]
-                    bundles_str = ', '.join(bundle_names[:3])
+                for field in sorted(fields, key=lambda f: f["field_name"]):
+                    bundles = field.get("bundles", [])
+                    bundle_names = [b.get("bundle", "") for b in bundles]
+                    bundles_str = ", ".join(bundle_names[:3])
                     if len(bundle_names) > 3:
                         bundles_str += f" (+{len(bundle_names) - 3} more)"
 
-                    field_label = field.get('label', field['field_name'])
-                    field_type = field.get('field_type', 'unknown')
+                    field_label = field.get("label", field["field_name"])
+                    field_type = field.get("field_type", "unknown")
 
                     output.append(f"   • {field_label} ({field['field_name']})")
                     output.append(f"     Type: {field_type} | Bundles: {bundles_str}")
@@ -2161,7 +2243,9 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
         return f"❌ Error: {str(e)}"
 
 
-def _get_fields_data(field_name: Optional[str], entity_type: Optional[str], drupal_root: Path) -> List[dict]:
+def _get_fields_data(
+    field_name: Optional[str], entity_type: Optional[str], drupal_root: Path
+) -> List[dict]:
     """
     Get fields data using drush-first, file-fallback approach.
 
@@ -2184,18 +2268,24 @@ def _get_fields_data(field_name: Optional[str], entity_type: Optional[str], drup
     return _get_fields_from_files(field_name, entity_type, drupal_root)
 
 
-def _get_fields_from_drush(field_name: Optional[str], entity_type: Optional[str]) -> Optional[List[dict]]:
+def _get_fields_from_drush(
+    field_name: Optional[str], entity_type: Optional[str]
+) -> Optional[List[dict]]:
     """Get active field configs from database via drush."""
     try:
         # Build filters
         entity_filter = ""
         if entity_type:
-            entity_filter = f"if ($field_config->getTargetEntityTypeId() != '{entity_type}') continue;"
+            entity_filter = (
+                f"if ($field_config->getTargetEntityTypeId() != '{entity_type}') continue;"
+            )
 
         field_filter = ""
         if field_name:
             # Support partial matching
-            field_filter = f"if (strpos($field_config->getName(), '{field_name}') === false) continue;"
+            field_filter = (
+                f"if (strpos($field_config->getName(), '{field_name}') === false) continue;"
+            )
 
         php_code = f"""
         $fields_data = [];
@@ -2292,7 +2382,9 @@ def _get_fields_from_drush(field_name: Optional[str], entity_type: Optional[str]
         return None
 
 
-def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str], drupal_root: Path) -> List[dict]:
+def _get_fields_from_files(
+    field_name: Optional[str], entity_type: Optional[str], drupal_root: Path
+) -> List[dict]:
     """Parse field configs from files as fallback."""
     fields_data = {}
 
@@ -2312,21 +2404,22 @@ def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str]
         for storage_file in config_dir.rglob("field.storage.*.yml"):
             try:
                 import yaml
-                with open(storage_file, 'r') as f:
+
+                with open(storage_file, "r") as f:
                     storage_config = yaml.safe_load(f)
 
                 if not storage_config:
                     continue
 
-                entity_type_id = storage_config.get('entity_type', '')
-                field_name_storage = storage_config.get('field_name', '')
+                entity_type_id = storage_config.get("entity_type", "")
+                field_name_storage = storage_config.get("field_name", "")
 
                 if entity_type_id and field_name_storage:
                     key = f"{entity_type_id}.{field_name_storage}"
                     storage_info[key] = {
-                        'field_type': storage_config.get('type', 'unknown'),
-                        'cardinality': storage_config.get('cardinality', 1),
-                        'settings': storage_config.get('settings', {})
+                        "field_type": storage_config.get("type", "unknown"),
+                        "cardinality": storage_config.get("cardinality", 1),
+                        "settings": storage_config.get("settings", {}),
                     }
             except Exception as e:
                 logger.debug(f"Error parsing {storage_file}: {e}")
@@ -2341,15 +2434,16 @@ def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str]
         for config_file in config_dir.rglob(pattern):
             try:
                 import yaml
-                with open(config_file, 'r') as f:
+
+                with open(config_file, "r") as f:
                     config = yaml.safe_load(f)
 
                 if not config:
                     continue
 
-                entity_type_id = config.get('entity_type', '')
-                field_name_config = config.get('field_name', '')
-                bundle = config.get('bundle', '')
+                entity_type_id = config.get("entity_type", "")
+                field_name_config = config.get("field_name", "")
+                bundle = config.get("bundle", "")
 
                 # Apply filters
                 if entity_type and entity_type_id != entity_type:
@@ -2364,32 +2458,34 @@ def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str]
 
                 # Create or update field entry
                 if storage_key not in fields_data:
-                    settings = config.get('settings', {})
+                    settings = config.get("settings", {})
                     field_entry = {
-                        'field_name': field_name_config,
-                        'entity_type': entity_type_id,
-                        'label': config.get('label', field_name_config),
-                        'description': config.get('description', ''),
-                        'field_type': storage.get('field_type', 'unknown'),
-                        'cardinality': storage.get('cardinality', 1),
-                        'translatable': config.get('translatable', False),
-                        'bundles': []
+                        "field_name": field_name_config,
+                        "entity_type": entity_type_id,
+                        "label": config.get("label", field_name_config),
+                        "description": config.get("description", ""),
+                        "field_type": storage.get("field_type", "unknown"),
+                        "cardinality": storage.get("cardinality", 1),
+                        "translatable": config.get("translatable", False),
+                        "bundles": [],
                     }
 
                     # Add type-specific settings
-                    if 'max_length' in settings:
-                        field_entry['max_length'] = settings['max_length']
-                    if 'target_type' in settings:
-                        field_entry['target_type'] = settings['target_type']
+                    if "max_length" in settings:
+                        field_entry["max_length"] = settings["max_length"]
+                    if "target_type" in settings:
+                        field_entry["target_type"] = settings["target_type"]
 
                     fields_data[storage_key] = field_entry
 
                 # Add bundle info
-                fields_data[storage_key]['bundles'].append({
-                    'bundle': bundle,
-                    'bundle_label': bundle,
-                    'required': config.get('required', False)
-                })
+                fields_data[storage_key]["bundles"].append(
+                    {
+                        "bundle": bundle,
+                        "bundle_label": bundle,
+                        "required": config.get("required", False),
+                    }
+                )
 
             except Exception as e:
                 logger.debug(f"Error parsing {config_file}: {e}")
@@ -2399,7 +2495,9 @@ def _get_fields_from_files(field_name: Optional[str], entity_type: Optional[str]
 
 
 @mcp.tool()
-def get_taxonomy_info(vocabulary: Optional[str] = None, term_name: Optional[str] = None, term_id: Optional[int] = None) -> str:
+def get_taxonomy_info(
+    vocabulary: Optional[str] = None, term_name: Optional[str] = None, term_id: Optional[int] = None
+) -> str:
     """
     Get comprehensive information about Drupal taxonomies, vocabularies, and terms.
 
@@ -2488,16 +2586,16 @@ def _get_vocabularies_summary(drupal_root: Path) -> str:
 
     for vocab in vocabs_data:
         output.append(f"• {vocab['label']} ({vocab['id']})")
-        if vocab.get('description'):
+        if vocab.get("description"):
             output.append(f"  Description: {vocab['description']}")
 
-        term_count = vocab.get('term_count', 0)
+        term_count = vocab.get("term_count", 0)
         output.append(f"  Terms: {term_count}")
 
         # Show which fields reference this vocabulary
-        fields = vocab.get('referencing_fields', [])
+        fields = vocab.get("referencing_fields", [])
         if fields:
-            field_summary = ', '.join(fields[:3])
+            field_summary = ", ".join(fields[:3])
             if len(fields) > 3:
                 field_summary += f" (+{len(fields) - 3} more)"
             output.append(f"  Used by fields: {field_summary}")
@@ -2518,11 +2616,11 @@ def _get_vocabulary_terms(vocabulary: str, drupal_root: Path) -> str:
     if not terms_data:
         return f"ℹ️ No terms found in vocabulary '{vocabulary}'"
 
-    vocab_info = terms_data.get('vocabulary', {})
-    terms = terms_data.get('terms', [])
+    vocab_info = terms_data.get("vocabulary", {})
+    terms = terms_data.get("terms", [])
 
     output = [f"📚 Vocabulary: {vocab_info.get('label', vocabulary)} ({vocabulary})"]
-    if vocab_info.get('description'):
+    if vocab_info.get("description"):
         output.append(f"   Description: {vocab_info['description']}")
     output.append(f"   Total terms: {len(terms)}\n")
 
@@ -2549,7 +2647,7 @@ def _search_terms_by_name(term_name: str, vocabulary: Optional[str], drupal_root
     # If only one result, automatically show detailed usage analysis
     if len(results) == 1:
         logger.info(f"Single term found for '{term_name}', showing detailed usage analysis")
-        return _get_term_usage_analysis(results[0]['tid'], drupal_root)
+        return _get_term_usage_analysis(results[0]["tid"], drupal_root)
 
     # Multiple results - show summary with prominent term IDs
     output = [f"🔍 Terms matching '{term_name}' ({len(results)} found)"]
@@ -2559,11 +2657,15 @@ def _search_terms_by_name(term_name: str, vocabulary: Optional[str], drupal_root
         output.append(f"• {term['name']} (tid: {term['tid']})")
         output.append(f"  Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
 
-        if term.get('description'):
-            desc = term['description'][:100] + "..." if len(term['description']) > 100 else term['description']
+        if term.get("description"):
+            desc = (
+                term["description"][:100] + "..."
+                if len(term["description"]) > 100
+                else term["description"]
+            )
             output.append(f"  Description: {desc}")
 
-        usage_count = term.get('usage_count', 0)
+        usage_count = term.get("usage_count", 0)
         if usage_count > 0:
             output.append(f"  ⚠️  Used in {usage_count} content item(s)")
         else:
@@ -2576,32 +2678,57 @@ def _search_terms_by_name(term_name: str, vocabulary: Optional[str], drupal_root
 
 def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
     """Get detailed usage analysis for a specific term."""
+    # CRITICAL: Verify database connection BEFORE attempting to fetch term data
+    db_ok, db_msg = verify_database_connection()
+    if not db_ok:
+        return (
+            f"❌ ERROR: Cannot analyze term {term_id} usage\n\n"
+            f"Database connection required but unavailable.\n"
+            f"Reason: {db_msg}\n\n"
+            f"⚠️  IMPORTANT: Do NOT delete this term without manual verification!\n\n"
+            f"Troubleshooting steps:\n"
+            f"1. Verify drush is working: drush status\n"
+            f"2. Check database connectivity in the output above\n"
+            f"3. Ensure your development environment is running (DDEV/Lando/etc.)\n"
+            f"4. If database is accessible, manually check term usage:\n"
+            f'   drush sqlq "SELECT COUNT(*) FROM taxonomy_index WHERE tid={term_id}"\n\n'
+            f"Without database access, Scout cannot determine if this term is safe to delete."
+        )
+
     usage_data = _get_term_usage_from_drush(term_id)
 
     if not usage_data:
-        usage_data = _get_term_usage_from_files(term_id, drupal_root)
+        # Database is connected but term not found or query failed
+        # Don't fallback to files - it won't work and gives false negatives
+        return (
+            f"❌ Term {term_id} not found or query failed\n\n"
+            f"Possible reasons:\n"
+            f"1. Term ID does not exist in the database\n"
+            f"2. Drush query failed (check logs)\n"
+            f"3. Database permissions issue\n\n"
+            f'Try: drush sqlq "SELECT * FROM taxonomy_term_field_data WHERE tid={term_id}"'
+        )
 
-    if not usage_data:
-        return f"ℹ️ Term {term_id} not found"
-
-    term = usage_data['term']
+    term = usage_data["term"]
     output = [f"🏷️  Term: {term['name']} (tid: {term_id})"]
     output.append(f"   Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
+    output.append(f"   📊 Data source: Live database via drush")
+    output.append("")
 
-    if term.get('description'):
+    if term.get("description"):
         output.append(f"   Description: {term['description']}")
 
-    if term.get('parent'):
+    if term.get("parent"):
         output.append(f"   Parent: {term['parent']}")
 
-    children = term.get('children', [])
+    children = term.get("children", [])
     if children:
         output.append(f"   Children: {', '.join(children)}")
 
     output.append("")
 
     # Content usage
-    content_usage = usage_data.get('content_usage', [])
+    content_usage = usage_data.get("content_usage", [])
     if content_usage:
         output.append(f"📄 Used in {len(content_usage)} content item(s):")
         for item in content_usage[:10]:  # Show first 10
@@ -2611,7 +2738,7 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
         output.append("")
 
     # Views usage
-    views_usage = usage_data.get('views_usage', [])
+    views_usage = usage_data.get("views_usage", [])
     if views_usage:
         output.append(f"👁️  Used in {len(views_usage)} view(s):")
         for view in views_usage:
@@ -2619,11 +2746,13 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
         output.append("")
 
     # Fields that could reference this term
-    fields = usage_data.get('referencing_fields', [])
+    fields = usage_data.get("referencing_fields", [])
     if fields:
         output.append(f"🔗 Vocabulary referenced by {len(fields)} field(s):")
         for field in fields:
-            output.append(f"   • {field['field_label']} ({field['field_name']}) on {', '.join(field['bundles'])}")
+            output.append(
+                f"   • {field['field_label']} ({field['field_name']}) on {', '.join(field['bundles'])}"
+            )
         output.append("")
 
     # Safety assessment
@@ -2631,13 +2760,16 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
     if total_usage == 0 and not children:
         output.append("✅ SAFE TO DELETE")
         output.append("   This term is not used in content, views, or as a parent term.")
+        output.append("   Verified via database query.")
     elif children:
         output.append("⚠️  WARNING: Has child terms")
         output.append(f"   {len(children)} child term(s) will become orphaned if deleted.")
         output.append("   Consider reassigning children or deleting them first.")
     else:
         output.append("⚠️  CAUTION: Term is in use")
-        output.append(f"   Used in {len(content_usage)} content item(s) and {len(views_usage)} view(s).")
+        output.append(
+            f"   Used in {len(content_usage)} content item(s) and {len(views_usage)} view(s)."
+        )
         output.append("   Deleting will remove term references from content.")
         output.append("   Consider merging with another term instead.")
 
@@ -2647,16 +2779,16 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
 def _build_term_hierarchy(terms: List[dict]) -> List[dict]:
     """Build hierarchical tree structure from flat term list."""
     # Create lookup dict
-    terms_by_id = {t['tid']: {**t, 'children': []} for t in terms}
+    terms_by_id = {t["tid"]: {**t, "children": []} for t in terms}
 
     # Build tree
     root_terms = []
     for term in terms:
-        parent_id = term.get('parent_tid', 0)
+        parent_id = term.get("parent_tid", 0)
         if parent_id and parent_id in terms_by_id:
-            terms_by_id[parent_id]['children'].append(terms_by_id[term['tid']])
+            terms_by_id[parent_id]["children"].append(terms_by_id[term["tid"]])
         else:
-            root_terms.append(terms_by_id[term['tid']])
+            root_terms.append(terms_by_id[term["tid"]])
 
     return root_terms
 
@@ -2665,12 +2797,12 @@ def _append_term_tree(output: List[str], terms: List[dict], level: int):
     """Recursively append term tree to output."""
     indent = "   " * level
     for term in terms:
-        usage = term.get('usage_count', 0)
+        usage = term.get("usage_count", 0)
         usage_str = f" ({usage} uses)" if usage > 0 else ""
         output.append(f"{indent}• {term['name']} (tid: {term['tid']}){usage_str}")
 
-        if term.get('children'):
-            _append_term_tree(output, term['children'], level + 1)
+        if term.get("children"):
+            _append_term_tree(output, term["children"], level + 1)
 
 
 def _get_vocabularies_from_drush() -> Optional[List[dict]]:
@@ -2752,17 +2884,20 @@ def _get_vocabularies_from_files(drupal_root: Path) -> List[dict]:
         for vocab_file in config_dir.rglob("taxonomy.vocabulary.*.yml"):
             try:
                 import yaml
-                with open(vocab_file, 'r') as f:
+
+                with open(vocab_file, "r") as f:
                     config = yaml.safe_load(f)
 
                 if config:
-                    vocabs_data.append({
-                        'id': config.get('vid', ''),
-                        'label': config.get('name', ''),
-                        'description': config.get('description', ''),
-                        'term_count': 0,  # Can't get from files
-                        'referencing_fields': []  # Would need to parse field configs
-                    })
+                    vocabs_data.append(
+                        {
+                            "id": config.get("vid", ""),
+                            "label": config.get("name", ""),
+                            "description": config.get("description", ""),
+                            "term_count": 0,  # Can't get from files
+                            "referencing_fields": [],  # Would need to parse field configs
+                        }
+                    )
             except Exception as e:
                 logger.debug(f"Error parsing {vocab_file}: {e}")
                 continue
@@ -2896,7 +3031,9 @@ def _search_terms_from_drush(term_name: str, vocabulary: Optional[str]) -> Optio
         return None
 
 
-def _search_terms_from_files(term_name: str, vocabulary: Optional[str], drupal_root: Path) -> List[dict]:
+def _search_terms_from_files(
+    term_name: str, vocabulary: Optional[str], drupal_root: Path
+) -> List[dict]:
     """Search terms in files (limited fallback)."""
     return []
 
@@ -3003,17 +3140,26 @@ def _get_term_usage_from_drush(term_id: int) -> Optional[dict]:
 
 
 def _get_term_usage_from_files(term_id: int, drupal_root: Path) -> Optional[dict]:
-    """Get term usage from files (very limited fallback)."""
-    # This would require parsing content exports or searching views configs
-    # Not practical without database access
+    """
+    Get term usage from files (NOT IMPLEMENTED - database required).
+
+    This function intentionally returns None because taxonomy term usage
+    cannot be reliably determined from config files alone. The taxonomy_index
+    table in the database is the only accurate source for term usage.
+
+    IMPORTANT: Returning None here will trigger an error message in the caller,
+    preventing false "safe to delete" recommendations.
+    """
+    logger.warning(
+        f"File-based term usage analysis requested for term {term_id} "
+        "but this is not implemented. Database access via drush is required."
+    )
     return None
 
 
 @mcp.tool()
 def get_watchdog_logs(
-    severity: Optional[str] = None,
-    type: Optional[str] = None,
-    limit: int = 50
+    severity: Optional[str] = None, type: Optional[str] = None, limit: int = 50
 ) -> str:
     """
     Get recent Drupal watchdog logs (errors, warnings, notices) for debugging.
@@ -3060,6 +3206,24 @@ def get_watchdog_logs(
     """
     ensure_indexed()
 
+    # CRITICAL: Check if dblog module is enabled BEFORE trying to fetch logs
+    if not check_module_enabled("dblog"):
+        return (
+            "❌ ERROR: DBLog module is not enabled\n\n"
+            "The Database Logging (dblog) module is required to store and retrieve watchdog logs.\n\n"
+            "To enable DBLog:\n"
+            "  drush en dblog -y\n\n"
+            "After enabling, logs will be captured going forward (historical logs won't be available).\n\n"
+            "ALTERNATIVE LOGGING OPTIONS:\n"
+            "• DDEV users: ddev logs\n"
+            "• Lando users: lando logs\n"
+            "• Check PHP error log (configured in settings.php)\n"
+            "• Check web server error logs (Apache/Nginx)\n"
+            "• If syslog module is enabled: Check system logs\n\n"
+            "Note: DBLog stores logs in the database. For production sites, consider using\n"
+            "syslog module instead to avoid database bloat."
+        )
+
     # Validate and cap limit
     if limit > 200:
         limit = 200
@@ -3067,7 +3231,16 @@ def get_watchdog_logs(
         limit = 1
 
     # Build drush watchdog:show command (simpler approach)
-    valid_severities = ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
+    valid_severities = [
+        "emergency",
+        "alert",
+        "critical",
+        "error",
+        "warning",
+        "notice",
+        "info",
+        "debug",
+    ]
 
     args = ["watchdog:show", "--format=json", f"--count={limit}"]
 
@@ -3075,7 +3248,7 @@ def get_watchdog_logs(
     if severity:
         severity_lower = severity.lower()
         if severity_lower not in valid_severities:
-            return f"Invalid severity level: {severity}\nValid options: {', '.join(valid_severities)}"
+            return f"❌ Invalid severity level: {severity}\nValid options: {', '.join(valid_severities)}"
         args.append(f"--severity={severity_lower}")
     else:
         # Default to errors and warnings
@@ -3090,22 +3263,23 @@ def get_watchdog_logs(
 
     if result is None:
         return (
-            "Could not retrieve watchdog logs from database.\n\n"
-            "AI ASSISTANT - DIAGNOSTIC STEPS:\n"
-            "1. Call list_modules() to check if 'dblog' module is enabled\n"
-            "2. If dblog not found, call describe_module('dblog') to verify it's installed\n"
-            "3. If dblog is not enabled, explain to user:\n"
-            "   - DBLog is required for database logging\n"
-            "   - Suggest enabling it: drush en dblog -y\n"
-            "   - After enabling, logs will be captured going forward\n\n"
-            "ALTERNATIVE: If DBLog is not available, suggest checking:\n"
-            "- DDEV logs: ddev logs (if using DDEV)\n"
-            "- Lando logs: lando logs (if using Lando)\n"
-            "- PHP error log: Check settings.php for error_log configuration\n"
-            "- Web server logs: Check Apache/Nginx error logs\n"
-            "- Syslog: If syslog module is enabled, check system logs\n\n"
-            "DO NOT run bash commands yourself - guide the user to run them.\n\n"
-            "Most common fix: Enable DBLog with 'drush en dblog -y'"
+            "❌ ERROR: Could not retrieve watchdog logs from database\n\n"
+            "DBLog is enabled but the drush command failed.\n\n"
+            "Possible causes:\n"
+            "1. Database connection issue\n"
+            "2. Drush not working properly\n"
+            "3. No logs match the filter criteria\n"
+            "4. Permissions issue\n\n"
+            "Troubleshooting:\n"
+            "• Verify drush works: drush status\n"
+            "• Check database connection in drush status output\n"
+            "• Try broader filters (remove severity/type filters)\n"
+            "• Check if watchdog table exists: drush sqlq \"SHOW TABLES LIKE 'watchdog'\"\n\n"
+            "ALTERNATIVE: Check container/server logs:\n"
+            "• DDEV: ddev logs\n"
+            "• Lando: lando logs\n"
+            "• Docker: docker-compose logs web\n"
+            "• Server: tail -f /var/log/apache2/error.log (or nginx)"
         )
 
     # Handle both dict (single entry) and list (multiple entries) responses
@@ -3132,7 +3306,16 @@ def get_watchdog_logs(
         severity_groups[sev].append(entry)
 
     # Display in severity order (most severe first)
-    severity_order = ["EMERGENCY", "ALERT", "CRITICAL", "ERROR", "WARNING", "NOTICE", "INFO", "DEBUG"]
+    severity_order = [
+        "EMERGENCY",
+        "ALERT",
+        "CRITICAL",
+        "ERROR",
+        "WARNING",
+        "NOTICE",
+        "INFO",
+        "DEBUG",
+    ]
 
     for sev_level in severity_order:
         if sev_level not in severity_groups:
@@ -3175,6 +3358,121 @@ def get_watchdog_logs(
     output.append("   - Use get_watchdog_logs(type='php') to focus on PHP errors only")
     output.append("   - Use get_watchdog_logs(severity='error') for critical errors only")
     output.append("4. After fixing issues, suggest user run: drush cache:rebuild")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def check_scout_health() -> str:
+    """
+    Verify Scout's database connectivity and required dependencies.
+
+    Use this tool to diagnose issues with Scout's database-dependent features.
+    This checks:
+    - Drush availability and configuration
+    - Database connectivity via drush
+    - Critical module dependencies (dblog for logging)
+    - Overall system health
+
+    Returns a comprehensive health report with actionable recommendations.
+
+    Common use cases:
+    - "Check if Scout is working properly"
+    - "Why can't Scout access the database?"
+    - "Verify Scout's health before using taxonomy tools"
+    """
+    ensure_indexed()
+
+    output = ["🏥 SCOUT HEALTH CHECK\n", "=" * 60, ""]
+
+    # 1. Check Drush
+    drush_cmd = get_drush_command()
+    if drush_cmd:
+        output.append(f"✅ Drush: Found ({' '.join(drush_cmd)})")
+    else:
+        output.append("❌ Drush: NOT FOUND")
+        output.append("   Scout cannot access the database without drush.")
+        output.append("   Install drush or configure drush_command in config.json")
+        output.append("")
+        output.append("IMPACT: Database-dependent features will NOT work:")
+        output.append("  • Taxonomy usage analysis")
+        output.append("  • Watchdog logs")
+        output.append("  • Entity structure queries")
+        output.append("  • Views information")
+        return "\n".join(output)
+
+    # 2. Check Database Connection
+    output.append("")
+    db_ok, db_msg = verify_database_connection()
+    if db_ok:
+        output.append(f"✅ Database: {db_msg}")
+    else:
+        output.append(f"❌ Database: {db_msg}")
+        output.append("")
+        output.append("TROUBLESHOOTING:")
+        output.append("  1. Verify your dev environment is running:")
+        output.append("     • DDEV: ddev start")
+        output.append("     • Lando: lando start")
+        output.append("  2. Check drush status: drush status")
+        output.append("  3. Verify database credentials in settings.php")
+        output.append("")
+        output.append("IMPACT: Database-dependent features will NOT work:")
+        output.append("  • Taxonomy usage analysis")
+        output.append("  • Watchdog logs")
+        output.append("  • Entity/field/views queries")
+        return "\n".join(output)
+
+    # 3. Check DBLog module
+    output.append("")
+    if check_module_enabled("dblog"):
+        output.append("✅ DBLog module: Enabled")
+    else:
+        output.append("⚠️  DBLog module: Not enabled")
+        output.append("   To enable: drush en dblog -y")
+        output.append("")
+        output.append("IMPACT: Watchdog log features will NOT work:")
+        output.append("  • get_watchdog_logs() will fail")
+        output.append("  • Cannot retrieve error/warning logs from database")
+        output.append("  • Alternative: Check container/server logs directly")
+
+    # 4. Check Drupal Root
+    output.append("")
+    drupal_root = Path(config.get("drupal_root", ""))
+    if drupal_root.exists():
+        output.append(f"✅ Drupal root: {drupal_root}")
+    else:
+        output.append(f"❌ Drupal root: NOT FOUND ({drupal_root})")
+        output.append("   Update drupal_root in config.json")
+
+    # 5. Module indexing status
+    output.append("")
+    if indexer and indexer.modules:
+        total = indexer.modules.get("total", 0)
+        custom = len(indexer.modules.get("custom", []))
+        contrib = len(indexer.modules.get("contrib", []))
+        output.append(f"✅ Module index: {total} modules ({custom} custom, {contrib} contrib)")
+    else:
+        output.append("⚠️  Module index: Not initialized")
+
+    # Overall status
+    output.append("")
+    output.append("=" * 60)
+    if drush_cmd and db_ok:
+        output.append("✅ OVERALL STATUS: HEALTHY")
+        output.append("")
+        output.append("Scout is fully operational. All database-dependent features are available:")
+        output.append("  • Taxonomy usage analysis (get_taxonomy_info)")
+        output.append("  • Entity/field/views queries")
+        output.append("  • Module dependency analysis")
+        if check_module_enabled("dblog"):
+            output.append("  • Watchdog logs (get_watchdog_logs)")
+    else:
+        output.append("⚠️  OVERALL STATUS: DEGRADED")
+        output.append("")
+        output.append("Scout has limited functionality. Fix the issues above to enable:")
+        output.append("  • Database-dependent features")
+        output.append("  • Accurate taxonomy usage analysis")
+        output.append("  • Live configuration queries")
 
     return "\n".join(output)
 
