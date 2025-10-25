@@ -3081,6 +3081,15 @@ def get_all_taxonomy_usage(
     - Use summary_only=True for ultra-compact output (just counts, no samples)
     - Increase limit carefully: limit=200 may approach token limits
 
+    **CRITICAL: If you only receive 100 terms but vocabulary has MORE:**
+    - The response includes "total_terms" vs "returned_terms" to show truncation
+    - Example: {"total_terms": 751, "returned_terms": 100, "truncated": true}
+    - You MUST inform the user results are truncated and suggest:
+      A) Increase limit (e.g., limit=751) for full dataset - may exceed token limits
+      B) Use summary_only=True with limit=0 for complete compact view
+      C) Continue with first 100 terms only
+    - DO NOT silently export incomplete data without warning the user!
+
     **PERFORMANCE NOTE:**
     - Small vocabularies (1-50 terms): 5-10 seconds
     - Medium vocabularies (50-200 terms): 15-30 seconds
@@ -3261,8 +3270,12 @@ def get_all_taxonomy_usage(
 
         if truncated:
             result["message"] = (
-                f"Showing {len(usage_data)} of {total_terms} terms. "
-                f"Increase limit parameter to see more, or use summary_only=True for compact output."
+                f"⚠️  TRUNCATED RESULTS: Showing {len(usage_data)} of {total_terms} terms. "
+                f"The vocabulary has {total_terms} total terms, but only {len(usage_data)} are included. "
+                f"Options: (1) Increase limit={total_terms} for all terms, "
+                f"(2) Use summary_only=True with limit=0 for compact full view, "
+                f"(3) Continue with current {len(usage_data)} terms. "
+                f"DO NOT export to CSV without informing user of truncation!"
             )
 
         # Return as JSON for AI to format
@@ -3270,6 +3283,236 @@ def get_all_taxonomy_usage(
 
     except Exception as e:
         logger.error(f"Error in get_all_taxonomy_usage: {e}", exc_info=True)
+        return json.dumps({"_error": True, "message": str(e)})
+
+
+@mcp.tool()
+def export_taxonomy_usage_to_csv(
+    vocabulary: str,
+    output_path: Optional[str] = None,
+    check_code: bool = False,
+    summary_only: bool = True,
+) -> str:
+    """
+    Export ALL taxonomy term usage data directly to a CSV file, bypassing MCP token limits.
+
+    **BEST SOLUTION FOR LARGE VOCABULARIES (500+ terms)**
+
+    This tool writes CSV directly to the filesystem, avoiding MCP's 25K token response limit.
+    Perfect for vocabularies with hundreds or thousands of terms.
+
+    **How It Works:**
+    1. Fetches ALL terms from vocabulary (no limit)
+    2. Writes CSV directly to file system
+    3. Returns file path and summary stats (tiny response)
+    4. LLM can then tell user where file is saved
+
+    **When to Use This Tool:**
+    - User asks to "export to CSV" or "save to file"
+    - Vocabulary has 200+ terms
+    - User wants complete dataset without truncation
+    - Avoiding token limit issues
+
+    **Workflow Example:**
+    ```
+    User: "Export all tags to CSV"
+    LLM: export_taxonomy_usage_to_csv(vocabulary="tags", output_path="/tmp/tags_export.csv")
+    Response: "✅ Exported 751 terms to /tmp/tags_export.csv (45 KB)"
+    LLM: "I've exported all 751 terms to /tmp/tags_export.csv. The file includes..."
+    ```
+
+    Args:
+        vocabulary: Vocabulary machine name (e.g., "topics", "tags")
+        output_path: Optional CSV file path. If not provided, auto-generates:
+                     /tmp/taxonomy_export_{vocabulary}_{timestamp}.csv
+        check_code: If True, scans custom code for term references (slower).
+                    Default: False (recommended for large exports)
+                    Only applies when summary_only=False
+        summary_only: If True, exports minimal columns (tid, name, count, needs_check).
+                      If False, exports FULL details including:
+                        - tid, name, description, parent, children
+                        - content_count (total usage)
+                        - content_usage_sample (first 5 nodes using this term)
+                        - fields_with_usage (which fields use this term)
+                        - code_usage (hardcoded references in custom code, if check_code=True)
+                        - config_usage (config file references, if check_code=True)
+                        - safe_to_delete (YES/NO based on all checks)
+                        - warnings (reasons why term might not be safe to delete)
+                      Default: True (faster for large vocabularies)
+
+    Returns:
+        JSON with file path, stats, and preview:
+        {
+            "file_path": "/tmp/tags_export.csv",
+            "total_terms": 751,
+            "file_size_kb": 45,
+            "columns": ["tid", "name", "count", "safe_to_delete"],
+            "preview": "First 3 rows preview..."
+        }
+
+    **Advantages Over get_all_taxonomy_usage():**
+    - No token limits (can handle 10,000+ terms)
+    - Faster (no JSON serialization overhead)
+    - File persists for user to download/analyze
+    - Response is tiny regardless of term count
+
+    **Performance:**
+    - 100 terms: ~5 seconds
+    - 500 terms: ~20 seconds
+    - 1000 terms: ~40 seconds
+    - 5000 terms: ~3 minutes
+    """
+    import csv
+    from datetime import datetime
+
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return json.dumps({
+                "_error": True,
+                "message": "Could not determine Drupal root. Check drupal_root in config.",
+            })
+
+        # Verify database connection first
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return json.dumps({
+                "_error": True,
+                "message": f"Database connection required. {db_msg}",
+            })
+
+        # Auto-generate path if not provided
+        if not output_path:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = f"/tmp/taxonomy_export_{vocabulary}_{timestamp}.csv"
+
+        # Validate path is writable
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Get ALL terms directly from helper function (no limit)
+        logger.info(f"Fetching all terms from vocabulary '{vocabulary}'...")
+        terms = _get_all_terms_usage_from_drush(
+            vocabulary=vocabulary,
+            max_sample_nodes=0,  # Don't need samples for CSV
+            summary_only=summary_only,
+        )
+
+        if not terms:
+            return json.dumps({
+                "_error": True,
+                "message": f"Could not fetch terms for vocabulary '{vocabulary}'",
+                "suggestion": "Verify vocabulary machine name is correct.",
+            })
+
+        total_terms = len(terms)
+
+        # Add code/config usage if requested
+        if check_code and not summary_only:
+            terms = _add_code_usage_to_terms(terms, drupal_root)
+
+        # Determine CSV columns based on summary_only mode
+        if summary_only:
+            columns = ["tid", "name", "count", "needs_check"]
+        else:
+            # Full mode - include ALL available details
+            columns = [
+                "tid",
+                "name",
+                "description",
+                "parent",
+                "children",
+                "content_count",
+                "content_usage_sample",  # Sample nodes (first 5)
+                "fields_with_usage",
+                "code_usage",
+                "config_usage",
+                "safe_to_delete",
+                "warnings"
+            ]
+
+        # Write CSV
+        logger.info(f"Writing {total_terms} terms to {output_path}...")
+        with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction='ignore')
+            writer.writeheader()
+
+            for term in terms:
+                row = {}
+                for col in columns:
+                    value = term.get(col, "")
+
+                    # Special handling for different field types
+                    if col == "content_usage_sample":
+                        # Get sample nodes from content_usage array
+                        content_usage = term.get("content_usage", [])
+                        if content_usage:
+                            samples = [f"nid:{item.get('nid')} ({item.get('title', 'Untitled')})"
+                                     for item in content_usage[:5]]
+                            value = " | ".join(samples)
+                        else:
+                            value = ""
+
+                    elif col == "content_count":
+                        # Use content_count if available, otherwise count content_usage
+                        value = term.get("content_count") or term.get("count", 0)
+
+                    elif col == "code_usage":
+                        # Format code references
+                        code_usage = term.get("code_usage", [])
+                        if code_usage:
+                            refs = [f"{item.get('file', '')}:{item.get('line', '')}"
+                                   for item in code_usage]
+                            value = " | ".join(refs)
+                        else:
+                            value = ""
+
+                    elif col == "config_usage":
+                        # Format config references
+                        config_usage = term.get("config_usage", [])
+                        if config_usage:
+                            refs = [f"{item.get('config_name', '')} ({item.get('config_type', '')})"
+                                   for item in config_usage]
+                            value = " | ".join(refs)
+                        else:
+                            value = ""
+
+                    elif isinstance(value, list):
+                        # Handle any other lists/arrays
+                        value = " | ".join(str(v) for v in value)
+
+                    elif isinstance(value, bool):
+                        # Convert boolean to readable text
+                        value = "YES" if value else "NO"
+
+                    row[col] = value
+
+                writer.writerow(row)
+
+        # Get file size
+        file_size_kb = round(output_file.stat().st_size / 1024, 1)
+
+        # Create preview (first 3 rows)
+        with open(output_path, "r", encoding="utf-8") as f:
+            preview_lines = [f.readline().strip() for _ in range(4)]  # Header + 3 rows
+            preview = "\n".join(preview_lines)
+
+        result = {
+            "success": True,
+            "file_path": str(output_path),
+            "total_terms": total_terms,
+            "file_size_kb": file_size_kb,
+            "columns": columns,
+            "preview": preview,
+            "message": f"✅ Successfully exported {total_terms} terms to {output_path} ({file_size_kb} KB)"
+        }
+
+        return json.dumps(result, indent=2)
+
+    except Exception as e:
+        logger.error(f"Error in export_taxonomy_usage_to_csv: {e}", exc_info=True)
         return json.dumps({"_error": True, "message": str(e)})
 
 
