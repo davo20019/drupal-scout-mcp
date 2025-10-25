@@ -3323,8 +3323,8 @@ def export_taxonomy_usage_to_csv(
 
     Args:
         vocabulary: Vocabulary machine name (e.g., "topics", "tags")
-        output_path: Optional CSV file path. If not provided, auto-generates in current directory:
-                     taxonomy_export_{vocabulary}_{timestamp}.csv
+        output_path: Optional CSV file path. If not provided, auto-generates in Drupal root:
+                     {drupal_root}/taxonomy_export_{vocabulary}_{timestamp}.csv
         check_code: If True, scans custom code for term references (slower).
                     Default: False (recommended for large exports)
                     Only applies when summary_only=False
@@ -3386,9 +3386,8 @@ def export_taxonomy_usage_to_csv(
         # Auto-generate path if not provided
         if not output_path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            # Save in project directory for easy access
-            project_dir = Path.cwd()
-            output_path = str(project_dir / f"taxonomy_export_{vocabulary}_{timestamp}.csv")
+            # Save in Drupal root directory for easy access in IDE
+            output_path = str(drupal_root / f"taxonomy_export_{vocabulary}_{timestamp}.csv")
 
         # Validate path is writable
         output_file = Path(output_path)
