@@ -3115,12 +3115,14 @@ def get_all_taxonomy_usage(
     Saves approximately 70-90% tokens compared to individual term queries.
     """
     try:
-        drupal_root = get_drupal_root()
-        if not drupal_root:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
             return json.dumps(
                 {
                     "_error": True,
-                    "message": "Could not determine Drupal root. Run from within Drupal directory.",
+                    "message": "Could not determine Drupal root. Check drupal_root in config.",
                 }
             )
 
