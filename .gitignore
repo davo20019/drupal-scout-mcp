@@ -67,3 +67,6 @@ htmlcov/
 
 # Claude-specific directories
 .claude/
+
+# Taxonomy exports
+taxonomy_export_*.csv
