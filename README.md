@@ -220,6 +220,34 @@ Unique: Auto-detects single term match and shows full usage analysis in ONE call
 Smart: Shows parent/child relationships, which content uses each term, safe-to-delete warnings
 ```
 
+**get_all_taxonomy_usage** - Batch analysis of ALL terms in a vocabulary
+```
+Example: "Analyze all terms in the tags vocabulary for cleanup"
+Example: "Show me usage statistics for all category terms"
+Shows: Complete usage analysis for every term in a vocabulary (optimized single query)
+Performance: 96% token savings vs calling get_taxonomy_info() per term
+Default limit: 100 terms (configurable with limit parameter)
+Smart truncation: Warns when vocabulary has more terms than returned
+Modes: summary_only=True (fast, counts only) or False (detailed with samples)
+Use case: Bulk cleanup planning, vocabulary auditing, finding unused terms
+Replaces: Hundreds of individual term queries with one efficient batch operation
+```
+
+**export_taxonomy_usage_to_csv** - Export taxonomy analysis directly to CSV file
+```
+Example: "Export all tags to CSV with full details"
+Example: "Export categories vocabulary to CSV for cleanup planning"
+Bypasses: MCP token limits entirely by writing directly to filesystem
+Speed: Much faster than AI-formatted output for large vocabularies
+Output: Saves to Drupal root directory as taxonomy_export_{vocab}_{timestamp}.csv
+Modes:
+  - summary_only=True: tid, name, count, needs_check (4 columns, fast)
+  - summary_only=False: 12 columns including content samples, code refs, safety analysis
+Handles: Unlimited terms (no 100-term limit like get_all_taxonomy_usage)
+Use case: Exporting 500+ terms, spreadsheet analysis, team reporting
+Perfect for: Large vocabularies where token limits prevent full display
+```
+
 **get_watchdog_logs** - Get recent Drupal error and warning logs for debugging
 ```
 Example: "Show me recent errors"
@@ -442,6 +470,54 @@ User: "I'll keep Technology and just delete 'Old Category'"
 AI: Uses Bash to run: ddev drush taxonomy:term:delete 75
 Result: Term safely deleted with MCP's confirmation it was unused
         Avoided accidentally breaking 87 articles by checking first
+```
+
+### Large Vocabulary Cleanup Workflow (CSV Export)
+```
+User: "I need to clean up our tags vocabulary - we have hundreds of old terms"
+MCP: get_all_taxonomy_usage(vocabulary="tags", summary_only=True)
+Result: "⚠️  TRUNCATED RESULTS: Showing 100 of 751 terms.
+         Options: (1) Increase limit, (2) Use CSV export, (3) Continue with 100"
+
+User: "Export all 751 terms to CSV with full details"
+MCP: export_taxonomy_usage_to_csv(vocabulary="tags", summary_only=False)
+Result: "✅ Successfully exported 751 terms to /path/to/drupal/taxonomy_export_tags_20251025_143500.csv (125 KB)
+
+         Columns included:
+         - tid, name, description, parent, children
+         - content_count, content_usage_sample (first 5 nodes)
+         - fields_with_usage, code_usage, config_usage
+         - safe_to_delete, warnings
+
+         Preview:
+         tid,name,description,parent,children,content_count,content_usage_sample,...
+         1,Technology,,,,87,nid:123 (AI Article) | nid:156 (Tech Blog)...
+         2,Old News,Deprecated,,,0,,...,YES,
+         3,Music,,,,23,nid:45 (Concert Review) | nid:67 (Album Review)...
+         ..."
+
+AI: "I've exported all 751 terms to a CSV file in your Drupal root. The file includes:
+     - Full usage analysis for every term
+     - Sample content using each term
+     - Safety recommendations
+     - 234 terms marked as safe to delete (0 content usage)
+
+     You can open it in Excel/Google Sheets to filter and plan your cleanup."
+
+User: "Great! Show me just the safe-to-delete terms"
+AI: "Based on the CSV, here are the 234 terms safe to delete (0 content usage):
+     - Old News (tid: 2)
+     - Deprecated Category (tid: 15)
+     - Test Tag (tid: 47)
+     ... [reads from CSV file]
+
+     Would you like me to generate a drush command to delete all of them?"
+
+User: "Yes, delete all unused terms"
+AI: Uses Bash to run: ddev drush taxonomy:term:delete 2,15,47,... [all safe term IDs]
+Result: Cleaned up 234 unused terms in one operation
+        CSV export enabled analysis of 751 terms without hitting token limits
+        Much faster than AI formatting - took 30 seconds vs several minutes
 ```
 
 ### Field Analysis Workflow
