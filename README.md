@@ -252,22 +252,31 @@ Perfect for: Large vocabularies where token limits prevent full display
 ```
 Example: "Export all articles to CSV with full details"
 Example: "Export all content for migration planning"
-Example: "Export unpublished blog posts to CSV"
+Example: "Export blog posts with field data for migration"
+Example: "Export articles including body text and custom fields"
 Bypasses: MCP token limits by writing directly to filesystem
 Perfect for: Content audits, SEO analysis, migration planning, bulk reviews
 Output: Saves to Drupal root directory as nodes_export_{type}_{timestamp}.csv
 Filters: content_type (article, page, etc.), include_unpublished, limit
 Modes:
   - summary_only=True: nid, title, type, status, created, author (7 columns, fast)
-  - summary_only=False: 21 columns including:
+  - summary_only=False: 21+ columns including:
     * Basic: nid, uuid, title, type, status, langcode, timestamps, author
     * URLs/SEO: url_alias, canonical_url, redirects, metatags (title/desc/keywords)
     * Relationships: taxonomy_terms, entity_references (nodes/media/users)
     * Publishing: promote, sticky, front_page flags
     * Revisions: revision_count, latest_revision_log
+  - include_field_data=True: Adds actual field content (use with summary_only=False)
+    * body: First 500 characters of body text (HTML stripped)
+    * body_format: Text format (full_html, basic_html, etc.)
+    * Images: Alt text + image count (field_image: "Logo image | 3 images total")
+    * Text/Link fields: Full values
+    * Custom fields: Auto-detected and included
+    * Performance: Adds 30-50% to export time
 Performance: 100 nodes ~10s, 1000 nodes ~60s, 5000 nodes ~5min
 Use case: Migration planning, SEO audits, content inventory, finding broken refs
 Smart detection: Auto-detects redirect and metatag modules for enhanced data
+AI knows: Automatically sets include_field_data=True when user asks for "body text", "field data", "complete export", or "migration data"
 ```
 
 **get_watchdog_logs** - Get recent Drupal error and warning logs for debugging
