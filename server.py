@@ -3394,9 +3394,13 @@ def export_taxonomy_usage_to_csv(
 
         # Get ALL terms directly from helper function (no limit)
         logger.info(f"Fetching all terms from vocabulary '{vocabulary}'...")
+
+        # In full mode, fetch sample nodes; in summary mode, skip them for speed
+        max_samples = 0 if summary_only else 5
+
         terms = _get_all_terms_usage_from_drush(
             vocabulary=vocabulary,
-            max_sample_nodes=0,  # Don't need samples for CSV
+            max_sample_nodes=max_samples,
             summary_only=summary_only,
         )
 
