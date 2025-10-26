@@ -884,31 +884,38 @@ def get_status_report(
 
     # Severity mapping
     # Drupal uses: 2=Error, 1=Warning, 0=OK, -1=Info
+    # The JSON output has both 'severity' (string) and 'sid' (int)
     severity_map = {"error": 2, "warning": 1, "ok": 0, "info": -1}
+    severity_string_map = {"Error": 2, "Warning": 1, "OK": 0, "Info": -1}
 
     # Filter requirements by severity
     filtered_requirements = {}
 
     for key, requirement in result.items():
-        severity = requirement.get("severity")
-        severity_name = requirement.get("sid", severity)  # Some use 'sid' instead
+        # Try to get severity as integer from 'sid' field first
+        severity_int = requirement.get("sid")
 
-        # Convert severity to int if it's a string
-        if isinstance(severity_name, str):
-            try:
-                severity = int(severity_name)
-            except ValueError:
-                severity = 0
-        elif isinstance(severity, str):
-            try:
-                severity = int(severity)
-            except ValueError:
-                severity = 0
-        else:
-            # Use sid if available, otherwise severity
-            severity = severity_name if isinstance(severity_name, int) else severity
+        # If sid is not available or not an int, try parsing 'severity' field
+        if severity_int is None or not isinstance(severity_int, int):
+            severity_str = requirement.get("severity", "")
 
-        requirement["severity_int"] = severity
+            # Try to convert string severity to int
+            if isinstance(severity_str, str):
+                # Check if it's a severity name (Error, Warning, etc.)
+                severity_int = severity_string_map.get(severity_str)
+
+                # If not found, try parsing as number
+                if severity_int is None:
+                    try:
+                        severity_int = int(severity_str)
+                    except (ValueError, TypeError):
+                        # Default to OK if we can't determine
+                        severity_int = 0
+            else:
+                # Default to OK if we can't determine
+                severity_int = 0
+
+        requirement["severity_int"] = severity_int
 
         # Apply filters
         if severity_filter:
