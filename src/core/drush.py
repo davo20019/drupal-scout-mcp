@@ -69,6 +69,35 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
             "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
         ])
 
+    # Add version manager paths (nvm, asdf, mise, etc.)
+    # These have dynamic paths, so we check if the base directories exist
+    home = Path.home()
+
+    # Check for nvm (Node Version Manager)
+    nvm_current = home / ".nvm" / "current" / "bin"
+    if nvm_current.exists():
+        standard_paths.append(str(nvm_current))
+
+    # Check for asdf version manager
+    asdf_shims = home / ".asdf" / "shims"
+    if asdf_shims.exists():
+        standard_paths.append(str(asdf_shims))
+
+    # Check for mise (formerly rtx)
+    mise_shims = home / ".local" / "share" / "mise" / "shims"
+    if mise_shims.exists():
+        standard_paths.append(str(mise_shims))
+
+    # Check for rbenv (Ruby version manager)
+    rbenv_shims = home / ".rbenv" / "shims"
+    if rbenv_shims.exists():
+        standard_paths.append(str(rbenv_shims))
+
+    # Check for pyenv (Python version manager)
+    pyenv_shims = home / ".pyenv" / "shims"
+    if pyenv_shims.exists():
+        standard_paths.append(str(pyenv_shims))
+
     current_path = env.get('PATH', '')
     # Only add paths that exist and aren't already in PATH
     paths_to_add = [
@@ -330,6 +359,35 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
                 "/mnt/c/Program Files/DDEV",  # WSL mount
                 "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
             ])
+
+        # Add version manager paths (nvm, asdf, mise, etc.)
+        # These have dynamic paths, so we check if the base directories exist
+        home = Path.home()
+
+        # Check for nvm (Node Version Manager)
+        nvm_current = home / ".nvm" / "current" / "bin"
+        if nvm_current.exists():
+            standard_paths.append(str(nvm_current))
+
+        # Check for asdf version manager
+        asdf_shims = home / ".asdf" / "shims"
+        if asdf_shims.exists():
+            standard_paths.append(str(asdf_shims))
+
+        # Check for mise (formerly rtx)
+        mise_shims = home / ".local" / "share" / "mise" / "shims"
+        if mise_shims.exists():
+            standard_paths.append(str(mise_shims))
+
+        # Check for rbenv (Ruby version manager)
+        rbenv_shims = home / ".rbenv" / "shims"
+        if rbenv_shims.exists():
+            standard_paths.append(str(rbenv_shims))
+
+        # Check for pyenv (Python version manager)
+        pyenv_shims = home / ".pyenv" / "shims"
+        if pyenv_shims.exists():
+            standard_paths.append(str(pyenv_shims))
 
         current_path = env.get('PATH', '')
         # Only add paths that exist and aren't already in PATH
