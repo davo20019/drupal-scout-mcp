@@ -17,6 +17,11 @@ from src.indexer import ModuleIndexer
 from src.search import ModuleSearch
 from src.prioritizer import ResultPrioritizer
 from src.drupal_org import DrupalOrgAPI, format_drupal_org_results, generate_recommendations
+from src.tools.exports import (
+    _get_term_usage_from_drush,
+    _get_all_terms_usage_from_drush,
+    _add_code_usage_to_terms,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -834,8 +839,8 @@ def search_drupal_org(query: str, limit: int = 10) -> str:
                 break
 
         if suggested_terms:
-            suggestion_text = f"\n\n💡 TRY THESE SPECIFIC SEARCHES INSTEAD:\n" + "\n".join([f"   - search_drupal_org(\"{term}\")" for term in suggested_terms])
-            suggestion_text += f"\n\n(drupal.org search works better with short, specific terms)"
+            suggestion_text = "\n\n💡 TRY THESE SPECIFIC SEARCHES INSTEAD:\n" + "\n".join([f"   - search_drupal_org(\"{term}\")" for term in suggested_terms])
+            suggestion_text += "\n\n(drupal.org search works better with short, specific terms)"
         else:
             suggestion_text = "\n\n💡 TIP: Try shorter, more specific terms. Single words work best.\n   Example: Instead of 'user authentication oauth', try 'oauth' or 'saml'"
 
@@ -1397,7 +1402,7 @@ def find_hook_implementations(hook_name: str) -> str:
     output = [f"🔍 **Hook Implementations: `{hook_name}`**\n"]
 
     if total == 0:
-        output.append(f"❌ **No implementations found**\n")
+        output.append("❌ **No implementations found**\n")
         output.append(f"No modules implement `{hook_name}`.\n")
         output.append("**Possible reasons:**")
         output.append("• Hook name might be misspelled")
@@ -2207,9 +2212,9 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
             # Storage info
             cardinality = field.get("cardinality", 1)
             if cardinality == -1:
-                output.append(f"   Storage: Unlimited values")
+                output.append("   Storage: Unlimited values")
             elif cardinality == 1:
-                output.append(f"   Storage: Single value")
+                output.append("   Storage: Single value")
             else:
                 output.append(f"   Storage: Up to {cardinality} values")
 
@@ -2715,7 +2720,7 @@ def _search_terms_by_name(term_name: str, vocabulary: Optional[str], drupal_root
         if usage_count > 0:
             output.append(f"  ⚠️  Used in {usage_count} content item(s)")
         else:
-            output.append(f"  ✅ Not used (safe to delete)")
+            output.append("  ✅ Not used (safe to delete)")
 
         output.append("")
 
@@ -2760,11 +2765,11 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
 
     output = [f"🏷️  Term: {term['name']} (tid: {term_id})"]
     output.append(f"   Vocabulary: {term['vocabulary_label']} ({term['vocabulary']})")
-    output.append(f"   📊 Data source: Live database via drush")
+    output.append("   📊 Data source: Live database via drush")
 
     # Show diagnostics
     if diagnostics:
-        output.append(f"   🔍 Query diagnostics:")
+        output.append("   🔍 Query diagnostics:")
         output.append(f"      • Database has {diagnostics.get('total_nodes_in_db', 0)} total nodes")
         output.append(
             f"      • taxonomy_index table: {diagnostics.get('taxonomy_index_count', 0)} references for this term"
@@ -3330,9 +3335,6 @@ def get_all_taxonomy_usage(
 
 
 
-# Import export tools from separate module
-from src.tools import exports
-
 @mcp.tool()
 def get_watchdog_logs(
     severity: Optional[str] = None, type: Optional[str] = None, limit: int = 50
@@ -3516,7 +3518,7 @@ def get_watchdog_logs(
     output.append(f"\n\nSHOWING {len(result)} OF REQUESTED {limit} ENTRIES")
 
     if severity or type:
-        output.append(f"\nFilters applied:")
+        output.append("\nFilters applied:")
         if severity:
             output.append(f"  - Severity: {severity}")
         if type:
