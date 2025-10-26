@@ -127,7 +127,7 @@ def _build_module_path_cache() -> Dict[str, Path]:
         else:
             # theme:list not available in this drush version
             # Themes will be found via filesystem scan if needed
-            logger.debug(f"theme:list not available, will find themes via filesystem scan")
+            logger.debug("theme:list not available, will find themes via filesystem scan")
 
     except Exception as e:
         logger.warning(f"Drush failed, using filesystem fallback: {e}")
@@ -758,7 +758,7 @@ def get_module_directory_tree(
     if truncated[0]:
         output.append(f"⚠️  Output truncated at {max_items} items to prevent token overflow")
         output.append("")
-        output.append(f"To see more structure:")
+        output.append("To see more structure:")
         output.append(f"  • Reduce depth: get_module_directory_tree('{module_name}', max_depth=2)")
         output.append(
             f"  • Increase limit: get_module_directory_tree('{module_name}', max_items=500)"
@@ -871,7 +871,6 @@ def read_module_function(
 
         # Extract function with docblock
         func_lines = lines[docblock_start : func_end + 1]
-        func_code = "".join(func_lines)
 
         output = []
         output.append(f"🔍 FUNCTION: {function_name}()")

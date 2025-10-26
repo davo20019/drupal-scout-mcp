@@ -95,9 +95,9 @@ def get_entity_structure(entity_type: str) -> str:
         output.append("⚠️  **Entity Type Not Found**\n")
         output.append(f"The entity type `{entity_type}` does not exist in your Drupal site.\n")
         output.append("**Common reasons:**\n")
-        output.append(f"• The module providing this entity type is not enabled")
-        output.append(f"• The entity type name may be incorrect")
-        output.append(f"• The module needs to be installed first\n")
+        output.append("• The module providing this entity type is not enabled")
+        output.append("• The entity type name may be incorrect")
+        output.append("• The module needs to be installed first\n")
 
         # Try to suggest the module name from the entity type
         # Common patterns: webform_submission -> webform, commerce_product -> commerce
@@ -105,9 +105,9 @@ def get_entity_structure(entity_type: str) -> str:
         output.append("**Suggestions:**\n")
         output.append(f"• Check if `{suggested_module}` module is installed:")
         output.append(f"  `drush pm:list --filter={suggested_module}`")
-        output.append(f"• Enable the module if available:")
+        output.append("• Enable the module if available:")
         output.append(f"  `drush en {suggested_module} -y`")
-        output.append(f"• Install via composer if not present:")
+        output.append("• Install via composer if not present:")
         output.append(f"  `composer require drupal/{suggested_module}`\n")
 
         return "\n".join(output)
