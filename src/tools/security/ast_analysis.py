@@ -14,6 +14,7 @@ Drupal-aware: Understands EntityQuery, TempStore, Config, Form API, etc.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional, List, Dict
 
