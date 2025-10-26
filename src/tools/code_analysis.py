@@ -25,13 +25,15 @@ from server import mcp
 logger = logging.getLogger(__name__)
 
 # Token limits for MCP responses
-MAX_RESPONSE_TOKENS = 20000  # ~20K tokens max per response
+# MCP has a 25K token limit, but we stay well below to ensure stability
+MAX_RESPONSE_TOKENS = 15000  # ~15K tokens max per response (conservative)
 CHARS_PER_TOKEN = 4  # Approximate conversion
-MAX_RESPONSE_CHARS = MAX_RESPONSE_TOKENS * CHARS_PER_TOKEN  # ~80KB
+MAX_RESPONSE_CHARS = MAX_RESPONSE_TOKENS * CHARS_PER_TOKEN  # ~60KB
 
 # File size thresholds
-SMALL_FILE_THRESHOLD = 50000  # 50KB
-MEDIUM_FILE_THRESHOLD = 200000  # 200KB
+# Conservative thresholds to prevent client hangs
+SMALL_FILE_THRESHOLD = 40000  # 40KB - safe for full read
+MEDIUM_FILE_THRESHOLD = 150000  # 150KB - use summary mode
 
 # Module-level cache for module paths
 _module_path_cache: Dict[str, Path] = {}
@@ -524,7 +526,7 @@ def list_module_files(
     module_path: Optional[str] = None,
     show_sizes: bool = True,
     offset: int = 0,
-    limit: int = 100,
+    limit: int = 50,
 ) -> str:
     """
     List files in a Drupal module with size information.
@@ -537,14 +539,14 @@ def list_module_files(
         module_path: Optional explicit module path override (relative to drupal_root)
         show_sizes: Include file sizes and chunking recommendations (default: True)
         offset: Starting file index for pagination (default: 0)
-        limit: Maximum number of files to return (default: 100)
+        limit: Maximum number of files to return (default: 50)
 
     Returns:
         Formatted list of files with paths, sizes, and reading recommendations
 
     Examples:
-        list_module_files("node")  # First 100 files
-        list_module_files("webform", offset=100, limit=100)  # Next 100 files
+        list_module_files("node")  # First 50 files
+        list_module_files("webform", offset=50, limit=50)  # Next 50 files
         list_module_files("views", "*.module")  # Just .module files
         list_module_files("views", "src/**/*.php")  # All PHP in src/
         list_module_files("olivero", "templates/*.twig")  # Twig templates
@@ -671,7 +673,7 @@ def list_module_files(
 
 @mcp.tool()
 def get_module_directory_tree(
-    module_name: str, module_path: Optional[str] = None, max_depth: int = 3, max_items: int = 300
+    module_name: str, module_path: Optional[str] = None, max_depth: int = 3, max_items: int = 200
 ) -> str:
     """
     Show module directory structure as a tree.
@@ -682,7 +684,7 @@ def get_module_directory_tree(
         module_name: Module/theme machine name
         module_path: Optional explicit module path override
         max_depth: Maximum depth to show (default: 3)
-        max_items: Maximum number of items to display (default: 300, prevents token overflow)
+        max_items: Maximum number of items to display (default: 200, prevents token overflow)
 
     Returns:
         Directory tree visualization
@@ -690,7 +692,7 @@ def get_module_directory_tree(
     Examples:
         get_module_directory_tree("node")
         get_module_directory_tree("views", max_depth=2)
-        get_module_directory_tree("webform", max_items=200)
+        get_module_directory_tree("webform", max_items=150)
     """
     ensure_indexed()
 
