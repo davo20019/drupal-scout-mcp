@@ -80,6 +80,14 @@ if total_tools < 23:
         print(f"    - Same as server.mcp? {src.tools.system.mcp is server.mcp}")
     except Exception as e:
         print(f"  ✗ src.tools.system failed: {e}")
+
+    try:
+        import src.tools.entities
+        print("  ✓ src.tools.entities imported")
+        print(f"    - entities.mcp ID: {id(src.tools.entities.mcp)}")
+        print(f"    - Same as server.mcp? {src.tools.entities.mcp is server.mcp}")
+    except Exception as e:
+        print(f"  ✗ src.tools.entities failed: {e}")
 else:
     print("✅ All 23 tools loaded successfully!")
 
@@ -92,18 +100,21 @@ print("=" * 70)
 drupal_org_tools = ['search_drupal_org', 'get_popular_drupal_modules', 'get_module_recommendation', 'get_drupal_org_module_details', 'search_module_issues']
 system_tools = ['get_watchdog_logs', 'check_scout_health']
 export_tools = ['export_taxonomy_usage_to_csv', 'export_nodes_to_csv', 'export_users_to_csv']
+entity_tools = ['get_entity_structure', 'get_field_info']
 
 tools = sorted(server.mcp._tool_manager._tools.keys())
 
 drupal_org_count = sum(1 for t in tools if t in drupal_org_tools)
 system_count = sum(1 for t in tools if t in system_tools)
 export_count = sum(1 for t in tools if t in export_tools)
-server_count = total_tools - drupal_org_count - system_count - export_count
+entity_count = sum(1 for t in tools if t in entity_tools)
+server_count = total_tools - drupal_org_count - system_count - export_count - entity_count
 
-print(f"  server.py: {server_count}/13 tools")
+print(f"  server.py: {server_count}/11 tools")
 print(f"  drupal_org.py: {drupal_org_count}/5 tools")
 print(f"  system.py: {system_count}/2 tools")
 print(f"  exports.py: {export_count}/3 tools")
+print(f"  entities.py: {entity_count}/2 tools")
 
 if drupal_org_count < 5:
     print("\n❌ Missing drupal_org tools:")
@@ -120,6 +131,12 @@ if system_count < 2:
 if export_count < 3:
     print("\n❌ Missing export tools:")
     for t in export_tools:
+        if t not in tools:
+            print(f"  - {t}")
+
+if entity_count < 2:
+    print("\n❌ Missing entity tools:")
+    for t in entity_tools:
         if t not in tools:
             print(f"  - {t}")
 
