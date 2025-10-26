@@ -1,7 +1,0 @@
-services:
-  demo_api.response_builder:
-    class: Drupal\demo_api\Service\ResponseBuilder
-    arguments:
-      - '@serialization.json'
-    tags:
-      - { name: service }
