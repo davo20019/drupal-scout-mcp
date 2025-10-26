@@ -354,14 +354,18 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
         )
 
         if result.returncode != 0:
-            logger.error(f"Drush command failed: {result.stderr}")
+            # Log at different levels depending on return_raw_error flag
+            # If return_raw_error=True, caller expects errors and will handle them
             if return_raw_error:
+                logger.debug(f"Drush command failed: {result.stderr}")
                 return {
                     "_error": True,
                     "_error_type": "drush_failed",
                     "_error_message": result.stderr.strip(),
                 }
-            return None
+            else:
+                logger.error(f"Drush command failed: {result.stderr}")
+                return None
 
         if result.stdout.strip():
             return json.loads(result.stdout)

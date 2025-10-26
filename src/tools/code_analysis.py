@@ -94,36 +94,38 @@ def _build_module_path_cache() -> Dict[str, Path]:
             logger.info(f"Found {len(cache)} modules via drush")
 
         # Get themes (theme:list may not exist in older drush versions)
-        try:
-            themes = run_drush_command(
-                ["theme:list", "--format=json", "--fields=name,path"], timeout=30
-            )
+        # Use return_raw_error to avoid ERROR logs for expected failures
+        themes = run_drush_command(
+            ["theme:list", "--format=json", "--fields=name,path"],
+            timeout=30,
+            return_raw_error=True,
+        )
 
-            if themes:
-                for name, info in themes.items():
-                    if "path" in info and info["path"] and name not in cache:
-                        config = get_config()
-                        drupal_root = Path(config.get("drupal_root"))
+        if themes and not themes.get("_error"):
+            for name, info in themes.items():
+                if "path" in info and info["path"] and name not in cache:
+                    config = get_config()
+                    drupal_root = Path(config.get("drupal_root"))
 
-                        theme_path = Path(info["path"])
-                        if not theme_path.is_absolute():
-                            # Try direct path first
-                            candidate = drupal_root / theme_path
+                    theme_path = Path(info["path"])
+                    if not theme_path.is_absolute():
+                        # Try direct path first
+                        candidate = drupal_root / theme_path
 
-                            # If not found, try with web/ prefix (composer structure)
-                            if not candidate.exists():
-                                candidate = drupal_root / "web" / theme_path
+                        # If not found, try with web/ prefix (composer structure)
+                        if not candidate.exists():
+                            candidate = drupal_root / "web" / theme_path
 
-                            theme_path = candidate
+                        theme_path = candidate
 
-                        if theme_path.exists():
-                            cache[name] = theme_path
+                    if theme_path.exists():
+                        cache[name] = theme_path
 
-                logger.info(f"Total modules+themes via drush: {len(cache)}")
-        except Exception:
+            logger.info(f"Total modules+themes via drush: {len(cache)}")
+        else:
             # theme:list not available in this drush version
             # Themes will be found via filesystem scan if needed
-            logger.info(f"theme:list not available, skipping theme discovery via drush")
+            logger.debug(f"theme:list not available, will find themes via filesystem scan")
 
     except Exception as e:
         logger.warning(f"Drush failed, using filesystem fallback: {e}")
