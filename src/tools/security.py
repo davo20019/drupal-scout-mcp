@@ -56,13 +56,16 @@ from src.tools.security.patterns import (
 # Import false positive filtering
 from src.tools.security.filters import _is_false_positive
 
-# Import AST analysis (optional tree-sitter enhancement)
+# Import AST analysis and scanning infrastructure
 from src.tools.security.ast_analysis import (
     HAS_TREE_SITTER,
     _init_php_parser,
     _has_sql_concatenation_ast,
     _check_access_control_ast,
     _format_finding,
+    _scan_file_for_patterns,
+    _get_php_files,
+    _format_findings,
 )
 
 logger = logging.getLogger(__name__)
