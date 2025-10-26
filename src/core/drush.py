@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -41,19 +42,42 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
     # MCP servers may have limited PATH, missing ddev/docker/lando/fin
     env = os.environ.copy()
 
+    # Detect platform for path separator
+    is_windows = platform.system() == 'Windows'
+    path_sep = ';' if is_windows else ':'
+
     # Add standard system paths if not already present
+    # Ordered by likelihood of containing dev tools
     standard_paths = [
-        "/usr/local/bin",      # Standard Unix location (Intel Mac, Linux)
-        "/opt/homebrew/bin",   # Homebrew on Apple Silicon
-        "/usr/bin",            # System binaries
-        "/bin",                # Core system binaries
+        "/usr/local/bin",           # Standard Unix (Intel Mac, Linux, Composer global)
+        "/opt/homebrew/bin",        # Homebrew on Apple Silicon Mac
+        "/usr/bin",                 # System binaries (all Unix-like)
+        "/bin",                     # Core system binaries (all Unix-like)
+        "/opt/local/bin",           # MacPorts on Mac
+        "/snap/bin",                # Snap packages on Linux
+        "/var/lib/flatpak/exports/bin",  # Flatpak on Linux
+        str(Path.home() / ".local" / "bin"),  # User-local binaries (Linux/Mac)
+        str(Path.home() / "bin"),   # User bin directory
     ]
 
+    # Add Windows/WSL specific paths
+    if is_windows or Path("/mnt/c").exists():  # WSL detected
+        standard_paths.extend([
+            "C:\\Program Files\\DDEV",
+            "C:\\ProgramData\\chocolatey\\bin",
+            "/mnt/c/Program Files/DDEV",  # WSL mount
+            "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
+        ])
+
     current_path = env.get('PATH', '')
-    paths_to_add = [p for p in standard_paths if p not in current_path]
+    # Only add paths that exist and aren't already in PATH
+    paths_to_add = [
+        p for p in standard_paths
+        if p not in current_path and Path(p).exists()
+    ]
 
     if paths_to_add:
-        env['PATH'] = ':'.join(paths_to_add) + ':' + current_path
+        env['PATH'] = path_sep.join(paths_to_add) + path_sep + current_path
 
 
     # Try to get drush version
@@ -280,19 +304,42 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
         # MCP servers may have limited PATH, missing ddev/docker/lando/fin
         env = os.environ.copy()
 
+        # Detect platform for path separator
+        is_windows = platform.system() == 'Windows'
+        path_sep = ';' if is_windows else ':'
+
         # Add standard system paths if not already present
+        # Ordered by likelihood of containing dev tools
         standard_paths = [
-            "/usr/local/bin",      # Standard Unix location (Intel Mac, Linux)
-            "/opt/homebrew/bin",   # Homebrew on Apple Silicon
-            "/usr/bin",            # System binaries
-            "/bin",                # Core system binaries
+            "/usr/local/bin",           # Standard Unix (Intel Mac, Linux, Composer global)
+            "/opt/homebrew/bin",        # Homebrew on Apple Silicon Mac
+            "/usr/bin",                 # System binaries (all Unix-like)
+            "/bin",                     # Core system binaries (all Unix-like)
+            "/opt/local/bin",           # MacPorts on Mac
+            "/snap/bin",                # Snap packages on Linux
+            "/var/lib/flatpak/exports/bin",  # Flatpak on Linux
+            str(Path.home() / ".local" / "bin"),  # User-local binaries (Linux/Mac)
+            str(Path.home() / "bin"),   # User bin directory
         ]
 
+        # Add Windows/WSL specific paths
+        if is_windows or Path("/mnt/c").exists():  # WSL detected
+            standard_paths.extend([
+                "C:\\Program Files\\DDEV",
+                "C:\\ProgramData\\chocolatey\\bin",
+                "/mnt/c/Program Files/DDEV",  # WSL mount
+                "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
+            ])
+
         current_path = env.get('PATH', '')
-        paths_to_add = [p for p in standard_paths if p not in current_path]
+        # Only add paths that exist and aren't already in PATH
+        paths_to_add = [
+            p for p in standard_paths
+            if p not in current_path and Path(p).exists()
+        ]
 
         if paths_to_add:
-            env['PATH'] = ':'.join(paths_to_add) + ':' + current_path
+            env['PATH'] = path_sep.join(paths_to_add) + path_sep + current_path
 
         result = subprocess.run(
             full_cmd,
