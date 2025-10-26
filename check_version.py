@@ -58,13 +58,33 @@ if total_tools < 23:
     # Check if modules imported
     print("\nChecking module imports:")
     try:
-        import src.tools.exports
+        import src.tools.exports_taxonomy
 
-        print("  ✓ src.tools.exports imported")
-        print(f"    - exports.mcp ID: {id(src.tools.exports.mcp)}")
-        print(f"    - Same as server.mcp? {src.tools.exports.mcp is server.mcp}")
+        print("  ✓ src.tools.exports_taxonomy imported")
+        print(f"    - exports_taxonomy.mcp ID: {id(src.tools.exports_taxonomy.mcp)}")
+        print(
+            f"    - Same as server.mcp? {src.tools.exports_taxonomy.mcp is server.mcp}"
+        )
     except Exception as e:
-        print(f"  ✗ src.tools.exports failed: {e}")
+        print(f"  ✗ src.tools.exports_taxonomy failed: {e}")
+
+    try:
+        import src.tools.exports_nodes
+
+        print("  ✓ src.tools.exports_nodes imported")
+        print(f"    - exports_nodes.mcp ID: {id(src.tools.exports_nodes.mcp)}")
+        print(f"    - Same as server.mcp? {src.tools.exports_nodes.mcp is server.mcp}")
+    except Exception as e:
+        print(f"  ✗ src.tools.exports_nodes failed: {e}")
+
+    try:
+        import src.tools.exports_users
+
+        print("  ✓ src.tools.exports_users imported")
+        print(f"    - exports_users.mcp ID: {id(src.tools.exports_users.mcp)}")
+        print(f"    - Same as server.mcp? {src.tools.exports_users.mcp is server.mcp}")
+    except Exception as e:
+        print(f"  ✗ src.tools.exports_users failed: {e}")
 
     try:
         import src.tools.drupal_org
@@ -175,7 +195,9 @@ print(f"  server.py: {server_count}/0 tools (empty - all extracted!)")
 print(f"  modules.py: {module_count}/8 tools")
 print(f"  drupal_org.py: {drupal_org_count}/5 tools")
 print(f"  system.py: {system_count}/2 tools")
-print(f"  exports.py: {export_count}/3 tools")
+print(
+    f"  exports_*.py: {export_count}/3 tools (split into taxonomy, nodes, users)"
+)
 print(f"  entities.py: {entity_count}/2 tools")
 print(f"  taxonomy.py: {taxonomy_count}/2 tools")
 print(f"  views.py: {views_count}/1 tool")
