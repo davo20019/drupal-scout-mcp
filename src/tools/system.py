@@ -635,17 +635,13 @@ def get_available_updates(include_dev: bool = False, security_only: bool = False
             if audit_result.returncode == 0:
                 output.append("✅ NO KNOWN SECURITY VULNERABILITIES")
                 output.append("")
-                output.append(
-                    "All installed packages are free from known security advisories."
-                )
+                output.append("All installed packages are free from known security advisories.")
                 return "\n".join(output)
             else:
                 # Parse audit output
                 audit_data = json.loads(audit_result.stdout)
                 if "advisories" in audit_data and audit_data["advisories"]:
-                    output.append(
-                        f"⚠️  FOUND {len(audit_data['advisories'])} SECURITY ADVISORIES\n"
-                    )
+                    output.append(f"⚠️  FOUND {len(audit_data['advisories'])} SECURITY ADVISORIES\n")
 
                     for pkg_name, advisories in audit_data["advisories"].items():
                         output.append(f"📦 {pkg_name}")
@@ -800,9 +796,7 @@ def get_available_updates(include_dev: bool = False, security_only: bool = False
 
 
 @mcp.tool()
-def get_status_report(
-    severity_filter: Optional[str] = None, include_ok: bool = False
-) -> str:
+def get_status_report(severity_filter: Optional[str] = None, include_ok: bool = False) -> str:
     """
     Get Drupal status report showing system health, errors, warnings, and recommendations.
 
@@ -1057,7 +1051,9 @@ def get_status_report(
 
             # Provide specific guidance
             if "settings.php" in req.get("description", "").lower():
-                output.append("  → Make settings.php read-only: chmod 444 sites/default/settings.php")
+                output.append(
+                    "  → Make settings.php read-only: chmod 444 sites/default/settings.php"
+                )
             elif "trusted host" in title.lower():
                 output.append("  → Configure trusted_host_patterns in settings.php")
             elif "cron" in title.lower():
@@ -1067,7 +1063,9 @@ def get_status_report(
         output.append("")
 
     output.append("GENERAL TROUBLESHOOTING:")
-    output.append("1. Read the descriptions carefully - they often contain direct links to fix issues")
+    output.append(
+        "1. Read the descriptions carefully - they often contain direct links to fix issues"
+    )
     output.append("2. Use other Scout tools for deeper analysis:")
     output.append("   • get_watchdog_logs() - Check recent errors")
     output.append("   • get_available_updates() - Check for security updates")
