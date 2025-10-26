@@ -5,10 +5,7 @@ Drupal Scout MCP Server
 A Model Context Protocol server for discovering functionality in Drupal sites.
 """
 
-import json
 import logging
-from pathlib import Path
-from typing import Optional, List
 
 from fastmcp import FastMCP
 
@@ -19,8 +16,8 @@ from src.core.config import (
     get_searcher,
     get_prioritizer,
     get_drupal_org_api,
+    load_config,
     ensure_indexed,
-    reset_index,
 )
 from src.core.drush import get_drush_command, run_drush_command
 from src.core.database import verify_database_connection, check_module_enabled
@@ -42,11 +39,259 @@ logger = logging.getLogger(__name__)
 # Initialize FastMCP server
 mcp = FastMCP("Drupal Scout")
 
-# Note: Core utilities (config, drush, database) moved to src/core/
-# Global state is now managed by core modules for better modularity
-#
-# Create module-level variable for prioritizer (used frequently in formatting)
-prioritizer = get_prioritizer()
+# Global state
+indexer: Optional[ModuleIndexer] = None
+searcher: Optional[ModuleSearch] = None
+prioritizer = ResultPrioritizer()
+drupal_org_api = DrupalOrgAPI()
+config = {}
+_drush_command_cache: Optional[List[str]] = None
+
+
+def load_config() -> dict:
+    """Load configuration from config.json or environment."""
+    config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            return json.load(f)
+
+    # Try local config
+    local_config = Path("config.json")
+    if local_config.exists():
+        with open(local_config, "r") as f:
+            return json.load(f)
+
+    # No default - user must configure
+    raise ValueError(
+        "Configuration not found. Please create config.json with:\n"
+        "{\n"
+        '  "drupal_root": "/path/to/your/drupal",\n'
+        '  "modules_path": "modules"\n'
+        "}"
+    )
+
+
+def ensure_indexed():
+    """Ensure modules are indexed before operations."""
+    global indexer, searcher, config
+
+    if indexer is None:
+        config = load_config()
+        drupal_root = Path(config["drupal_root"])
+
+        if not drupal_root.exists():
+            raise ValueError(
+                f"Drupal root not found: {drupal_root}\n"
+                f"Please configure drupal_root in config.json"
+            )
+
+        logger.info(f"Indexing modules from: {drupal_root}")
+        indexer = ModuleIndexer(drupal_root, config)
+        indexer.index_all()
+
+        searcher = ModuleSearch(indexer)
+        logger.info(f"Indexed {indexer.modules.get('total', 0)} modules")
+
+
+def get_drush_command() -> Optional[List[str]]:
+    """
+    Get drush command with caching and smart detection.
+
+    Returns:
+        List of command parts (e.g., ["ddev", "drush"]) or None if not found
+    """
+    global _drush_command_cache
+
+    if _drush_command_cache is not None:
+        return _drush_command_cache
+
+    # Try detection
+    _drush_command_cache = _detect_drush_command()
+    return _drush_command_cache
+
+
+def _detect_drush_command() -> Optional[List[str]]:
+    """
+    Detect how to run drush in this environment.
+
+    Priority:
+    1. User config (drush_command in config.json)
+    2. Auto-detect environment (DDEV, Lando, Docksal)
+    3. Composer vendor/bin/drush
+    4. Global drush
+
+    Returns:
+        List of command parts or None if drush not found
+    """
+    ensure_indexed()  # Make sure config is loaded
+
+    drupal_root = Path(config.get("drupal_root"))
+
+    # 1. User explicitly configured drush command
+    if config.get("drush_command"):
+        cmd = config["drush_command"].split()
+        logger.info(f"Using configured drush command: {' '.join(cmd)}")
+        return cmd
+
+    # 2. Auto-detect development environment
+
+    # DDEV
+    if (drupal_root / ".ddev" / "config.yaml").exists():
+        logger.info("Detected DDEV environment")
+        return ["ddev", "drush"]
+
+    # Lando
+    if (drupal_root / ".lando.yml").exists():
+        logger.info("Detected Lando environment")
+        return ["lando", "drush"]
+
+    # Docksal
+    if (drupal_root / ".docksal").exists():
+        logger.info("Detected Docksal environment")
+        return ["fin", "drush"]
+
+    # 3. Check for Composer-installed drush in vendor/bin
+    vendor_drush = drupal_root / "vendor" / "bin" / "drush"
+    if vendor_drush.exists() and vendor_drush.is_file():
+        logger.info(f"Using Composer drush: {vendor_drush}")
+        return [str(vendor_drush)]
+
+    # 4. Check for global drush
+    if shutil.which("drush"):
+        logger.info("Using global drush")
+        return ["drush"]
+
+    # No drush found
+    logger.warning("Drush not found in any expected location")
+    return None
+
+
+def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool = False):
+    """
+    Run a drush command and return JSON output.
+
+    Args:
+        args: Drush command arguments (e.g., ["pm:list", "--format=json"])
+        timeout: Command timeout in seconds
+        return_raw_error: If True, return dict with error info instead of None
+
+    Returns:
+        Parsed JSON output (dict or list) or None if command failed
+        If return_raw_error=True and error occurs, returns:
+        {"_error": True, "_error_type": "...", "_error_message": "..."}
+    """
+    drush_cmd = get_drush_command()
+
+    if not drush_cmd:
+        logger.error("Cannot run drush command: drush not found")
+        if return_raw_error:
+            return {
+                "_error": True,
+                "_error_type": "drush_not_found",
+                "_error_message": "Drush not found",
+            }
+        return None
+
+    drupal_root = Path(config.get("drupal_root"))
+    full_cmd = [*drush_cmd, *args]
+
+    try:
+        logger.debug(f"Running: {' '.join(full_cmd)}")
+        result = subprocess.run(
+            full_cmd, cwd=str(drupal_root), capture_output=True, text=True, timeout=timeout
+        )
+
+        if result.returncode != 0:
+            logger.error(f"Drush command failed: {result.stderr}")
+            if return_raw_error:
+                return {
+                    "_error": True,
+                    "_error_type": "drush_failed",
+                    "_error_message": result.stderr.strip(),
+                }
+            return None
+
+        if result.stdout.strip():
+            return json.loads(result.stdout)
+
+        return None
+
+    except subprocess.TimeoutExpired:
+        logger.error(f"Drush command timed out after {timeout}s")
+        if return_raw_error:
+            return {
+                "_error": True,
+                "_error_type": "timeout",
+                "_error_message": f"Command timed out after {timeout}s",
+            }
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse drush JSON output: {e}")
+        logger.error(f"Output was: {result.stdout[:200]}")
+        if return_raw_error:
+            return {"_error": True, "_error_type": "json_parse", "_error_message": str(e)}
+        return None
+    except Exception as e:
+        logger.error(f"Error running drush command: {e}")
+        if return_raw_error:
+            return {"_error": True, "_error_type": "unknown", "_error_message": str(e)}
+        return None
+
+
+def verify_database_connection() -> tuple[bool, str]:
+    """
+    Verify that we can connect to the Drupal database via drush.
+
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    result = run_drush_command(["status", "--format=json"], timeout=10, return_raw_error=True)
+
+    if not result:
+        return False, "Drush status command returned no data"
+
+    if isinstance(result, dict) and result.get("_error"):
+        error_type = result.get("_error_type", "unknown")
+        error_msg = result.get("_error_message", "Unknown error")
+        return False, f"Drush error ({error_type}): {error_msg}"
+
+    # Check database status in drush status output
+    db_status = result.get("db-status")
+    if db_status == "Connected":
+        return True, "Database connected"
+    elif db_status:
+        return False, f"Database status: {db_status}"
+    else:
+        # db-status not in output, try a simple query
+        test_result = run_drush_command(["ev", "echo 'OK';"], timeout=5)
+        if test_result is None:
+            return False, "Cannot execute PHP via drush"
+        return True, "Database connection assumed (drush working)"
+
+
+def check_module_enabled(module_name: str) -> bool:
+    """
+    Check if a specific module is enabled.
+
+    Args:
+        module_name: Machine name of the module (e.g., 'dblog', 'views')
+
+    Returns:
+        True if module is enabled, False otherwise
+    """
+    result = run_drush_command(["pm:list", "--format=json", "--status=enabled"])
+
+    if not result or not isinstance(result, dict):
+        return False
+
+    # Check if module exists and is enabled
+    module_info = result.get(module_name)
+    if not module_info:
+        return False
+
+    status = module_info.get("status", "").lower()
+    return status == "enabled"
 
 
 @mcp.tool()
@@ -71,14 +316,14 @@ def search_functionality(query: str, scope: str = "all", include_drupal_org: boo
     ensure_indexed()
 
     logger.info(f"Searching for: {query} (scope: {scope})")
-    results = get_searcher().search_functionality(query, scope)
+    results = searcher.search_functionality(query, scope)
 
     output = prioritizer.format_search_results(results)
 
     # If no local results and drupal.org search enabled, search drupal.org
     if include_drupal_org and results["total_matches"] == 0:
         logger.info(f"No local results, searching drupal.org for: {query}")
-        drupal_org_results = get_drupal_org_api().search_modules(query, limit=5)
+        drupal_org_results = drupal_org_api.search_modules(query, limit=5)
 
         if drupal_org_results:
             output += "\n\n" + "=" * 60 + "\n"
@@ -113,7 +358,7 @@ def list_modules(scope: str = "all", show_unused: bool = False) -> str:
     ensure_indexed()
 
     logger.info(f"Listing modules (scope: {scope}, show_unused: {show_unused})")
-    modules_data = get_searcher().list_all_modules(scope, show_unused)
+    modules_data = searcher.list_all_modules(scope, show_unused)
 
     return prioritizer.format_module_list(modules_data)
 
@@ -135,7 +380,7 @@ def describe_module(module_name: str) -> str:
     ensure_indexed()
 
     logger.info(f"Describing module: {module_name}")
-    module_data = get_searcher().describe_module(module_name)
+    module_data = searcher.describe_module(module_name)
 
     return prioritizer.format_module_detail(module_data)
 
@@ -167,7 +412,7 @@ def find_unused_contrib() -> str:
     ensure_indexed()
 
     logger.info("Finding unused contrib modules (with drush installation check)")
-    unused = get_searcher().find_unused_contrib(check_installed=True)
+    unused = searcher.find_unused_contrib(check_installed=True)
 
     return prioritizer.format_unused_modules(unused)
 
@@ -193,7 +438,7 @@ def check_redundancy(functionality: str) -> str:
     ensure_indexed()
 
     logger.info(f"Checking redundancy for: {functionality}")
-    check_result = get_searcher().check_redundancy(functionality)
+    check_result = searcher.check_redundancy(functionality)
 
     return prioritizer.format_redundancy_check(check_result)
 
@@ -211,13 +456,18 @@ def reindex_modules() -> str:
     Returns:
         Confirmation of reindexing
     """
+    global indexer, searcher
+
     logger.info("Forcing module reindex")
 
-    # Clear existing index and force re-indexing
-    reset_index()
+    # Clear existing index
+    indexer = None
+    searcher = None
+
+    # Re-index
     ensure_indexed()
 
-    return f"✓ Reindexed {get_indexer().modules.get('total', 0)} modules successfully"
+    return f"✓ Reindexed {indexer.modules.get('total', 0)} modules successfully"
 
 
 @mcp.tool()
@@ -274,9 +524,9 @@ def _build_dependency_graph() -> dict:
     modules = {}  # module -> full module data
 
     all_modules = (
-        get_indexer().modules.get("custom", [])
-        + get_indexer().modules.get("contrib", [])
-        + get_indexer().modules.get("core", [])
+        indexer.modules.get("custom", [])
+        + indexer.modules.get("contrib", [])
+        + indexer.modules.get("core", [])
     )
 
     # Build forward dependencies
@@ -575,7 +825,7 @@ def search_drupal_org(query: str, limit: int = 10) -> str:
     """
     logger.info(f"Searching drupal.org for: {query}")
 
-    modules = get_drupal_org_api().search_modules(query, limit=limit)
+    modules = drupal_org_api.search_modules(query, limit=limit)
 
     if not modules:
         # Provide helpful suggestions based on query
@@ -598,9 +848,7 @@ def search_drupal_org(query: str, limit: int = 10) -> str:
                 break
 
         if suggested_terms:
-            suggestion_text = "\n\n💡 TRY THESE SPECIFIC SEARCHES INSTEAD:\n" + "\n".join(
-                [f'   - search_drupal_org("{term}")' for term in suggested_terms]
-            )
+            suggestion_text = "\n\n💡 TRY THESE SPECIFIC SEARCHES INSTEAD:\n" + "\n".join([f"   - search_drupal_org(\"{term}\")" for term in suggested_terms])
             suggestion_text += "\n\n(drupal.org search works better with short, specific terms)"
         else:
             suggestion_text = "\n\n💡 TIP: Try shorter, more specific terms. Single words work best.\n   Example: Instead of 'user authentication oauth', try 'oauth' or 'saml'"
@@ -626,7 +874,7 @@ def get_popular_drupal_modules(category: str = "", limit: int = 20) -> str:
     """
     logger.info(f"Fetching popular modules (category: {category or 'all'})")
 
-    modules = get_drupal_org_api().get_popular_modules(category if category else None, limit=limit)
+    modules = drupal_org_api.get_popular_modules(category if category else None, limit=limit)
 
     if not modules:
         return "❌ Could not fetch popular modules from drupal.org"
@@ -676,14 +924,14 @@ def get_module_recommendation(need: str) -> str:
     # Search locally first
     try:
         ensure_indexed()
-        local_results = get_searcher().search_functionality(need, scope="all")
+        local_results = searcher.search_functionality(need, scope="all")
         local_modules = local_results["custom_modules"] + local_results["contrib_modules"]
     except Exception as e:
         logger.warning(f"Could not search locally: {e}")
         local_modules = []
 
     # Search drupal.org
-    drupal_org_modules = get_drupal_org_api().search_modules(need, limit=5)
+    drupal_org_modules = drupal_org_api.search_modules(need, limit=5)
 
     # Generate comprehensive recommendation
     output = [
@@ -767,7 +1015,7 @@ def get_drupal_org_module_details(module_name: str, include_issues: bool = False
     """
     logger.info(f"Fetching drupal.org details for: {module_name} (include_issues={include_issues})")
 
-    details = get_drupal_org_api().get_module_details(module_name, include_issues=include_issues)
+    details = drupal_org_api.get_module_details(module_name, include_issues=include_issues)
 
     if not details:
         return f"❌ Module '{module_name}' not found on drupal.org\n\nTip: Use search_drupal_org to find available modules"
@@ -947,9 +1195,9 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
     # Try to detect Drupal version from local installation
     drupal_version = None
     try:
-        if get_indexer() and get_indexer().drupal_root:
+        if indexer and indexer.drupal_root:
             # Try to read Drupal version from core
-            version_file = get_indexer().drupal_root / "core" / "lib" / "Drupal.php"
+            version_file = indexer.drupal_root / "core" / "lib" / "Drupal.php"
             if version_file.exists():
                 import re
 
@@ -966,7 +1214,7 @@ def search_module_issues(module_name: str, problem_description: str, limit: int 
     except Exception as e:
         logger.debug(f"Could not detect Drupal version: {e}")
 
-    matches = get_drupal_org_api().search_issues(
+    matches = drupal_org_api.search_issues(
         module_name, problem_description, limit=limit, drupal_version=drupal_version
     )
 
@@ -1124,7 +1372,7 @@ def find_hook_implementations(hook_name: str) -> str:
 
     # Search all indexed modules
     for module_type in ["custom", "contrib", "core"]:
-        modules = get_indexer().modules.get(module_type, [])
+        modules = indexer.modules.get(module_type, [])
 
         for module in modules:
             hooks = module.get("hooks", [])
@@ -1271,7 +1519,7 @@ def get_entity_structure(entity_type: str) -> str:
 
     logger.info(f"Getting entity structure for: {entity_type}")
 
-    drupal_root = Path(get_config().get("drupal_root"))
+    drupal_root = Path(config.get("drupal_root"))
 
     # Try to get entity info from drush first (most accurate)
     entity_info = _get_entity_info_from_drush(entity_type)
@@ -1415,11 +1663,11 @@ def _get_field_configs(entity_type: str, drupal_root: Path) -> List[dict]:
                     if config:
                         fields.append(
                             {
-                                "field_name": get_config().get("field_name"),
-                                "bundle": get_config().get("bundle"),
-                                "type": get_config().get("field_type"),
-                                "required": get_config().get("required", False),
-                                "label": get_config().get("label"),
+                                "field_name": config.get("field_name"),
+                                "bundle": config.get("bundle"),
+                                "type": config.get("field_type"),
+                                "required": config.get("required", False),
+                                "label": config.get("label"),
                             }
                         )
             except Exception as e:
@@ -1516,7 +1764,7 @@ def _get_display_configs(entity_type: str, display_type: str, drupal_root: Path)
                         display_info = {"bundle": bundle, "mode": mode}
 
                         # Extract field list
-                        content = get_config().get("content", {})
+                        content = config.get("content", {})
                         if display_type == "view":
                             display_info["fields"] = list(content.keys())
                         else:  # form
@@ -1602,7 +1850,8 @@ def get_views_summary(view_name: Optional[str] = None, entity_type: Optional[str
         Formatted summary of views configurations
     """
     try:
-        drupal_root = Path(get_config().get("drupal_root", ""))
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
             return "❌ Error: Drupal root not found. Check drupal_root in config."
@@ -1851,16 +2100,16 @@ def _get_views_from_files(view_name: Optional[str], drupal_root: Path) -> List[d
                     continue
 
                 view_config = {
-                    "id": get_config().get("id", "unknown"),
-                    "label": get_config().get("label", "Unknown"),
-                    "status": get_config().get("status", False),
-                    "description": get_config().get("description", ""),
-                    "base_table": get_config().get("base_table", ""),
+                    "id": config.get("id", "unknown"),
+                    "label": config.get("label", "Unknown"),
+                    "status": config.get("status", False),
+                    "description": config.get("description", ""),
+                    "base_table": config.get("base_table", ""),
                     "displays": [],
                 }
 
                 # Parse displays
-                displays = get_config().get("display", {})
+                displays = config.get("display", {})
                 for display_id, display_data in displays.items():
                     display_info = {
                         "id": display_id,
@@ -1943,7 +2192,8 @@ def get_field_info(field_name: Optional[str] = None, entity_type: Optional[str] 
         Formatted field information with usage details
     """
     try:
-        drupal_root = Path(get_config().get("drupal_root", ""))
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
             return "❌ Error: Drupal root not found. Check drupal_root in config."
@@ -2248,9 +2498,9 @@ def _get_fields_from_files(
                 if not config:
                     continue
 
-                entity_type_id = get_config().get("entity_type", "")
-                field_name_config = get_config().get("field_name", "")
-                bundle = get_config().get("bundle", "")
+                entity_type_id = config.get("entity_type", "")
+                field_name_config = config.get("field_name", "")
+                bundle = config.get("bundle", "")
 
                 # Apply filters
                 if entity_type and entity_type_id != entity_type:
@@ -2265,15 +2515,15 @@ def _get_fields_from_files(
 
                 # Create or update field entry
                 if storage_key not in fields_data:
-                    settings = get_config().get("settings", {})
+                    settings = config.get("settings", {})
                     field_entry = {
                         "field_name": field_name_config,
                         "entity_type": entity_type_id,
-                        "label": get_config().get("label", field_name_config),
-                        "description": get_config().get("description", ""),
+                        "label": config.get("label", field_name_config),
+                        "description": config.get("description", ""),
                         "field_type": storage.get("field_type", "unknown"),
                         "cardinality": storage.get("cardinality", 1),
-                        "translatable": get_config().get("translatable", False),
+                        "translatable": config.get("translatable", False),
                         "bundles": [],
                     }
 
@@ -2290,7 +2540,7 @@ def _get_fields_from_files(
                     {
                         "bundle": bundle,
                         "bundle_label": bundle,
-                        "required": get_config().get("required", False),
+                        "required": config.get("required", False),
                     }
                 )
 
@@ -2356,7 +2606,8 @@ def get_taxonomy_info(
         Formatted taxonomy information with usage analysis
     """
     try:
-        drupal_root = Path(get_config().get("drupal_root", ""))
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
             return "❌ Error: Drupal root not found. Check drupal_root in config."
@@ -2720,9 +2971,9 @@ def _get_vocabularies_from_files(drupal_root: Path) -> List[dict]:
                 if config:
                     vocabs_data.append(
                         {
-                            "id": get_config().get("vid", ""),
-                            "label": get_config().get("name", ""),
-                            "description": get_config().get("description", ""),
+                            "id": config.get("vid", ""),
+                            "label": config.get("name", ""),
+                            "description": config.get("description", ""),
                             "term_count": 0,  # Can't get from files
                             "referencing_fields": [],  # Would need to parse field configs
                         }
@@ -3014,7 +3265,8 @@ def get_all_taxonomy_usage(
     Saves approximately 70-90% tokens compared to individual term queries.
     """
     try:
-        drupal_root = Path(get_config().get("drupal_root", ""))
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
             return json.dumps(
@@ -3089,6 +3341,7 @@ def get_all_taxonomy_usage(
     except Exception as e:
         logger.error(f"Error in get_all_taxonomy_usage: {e}", exc_info=True)
         return json.dumps({"_error": True, "message": str(e)})
+
 
 
 @mcp.tool()
@@ -3371,7 +3624,7 @@ def check_scout_health() -> str:
 
     # 4. Check Drupal Root
     output.append("")
-    drupal_root = Path(get_config().get("drupal_root", ""))
+    drupal_root = Path(config.get("drupal_root", ""))
     if drupal_root.exists():
         output.append(f"✅ Drupal root: {drupal_root}")
     else:
@@ -3380,10 +3633,10 @@ def check_scout_health() -> str:
 
     # 5. Module indexing status
     output.append("")
-    if get_indexer() and get_indexer().modules:
-        total = get_indexer().modules.get("total", 0)
-        custom = len(get_indexer().modules.get("custom", []))
-        contrib = len(get_indexer().modules.get("contrib", []))
+    if indexer and indexer.modules:
+        total = indexer.modules.get("total", 0)
+        custom = len(indexer.modules.get("custom", []))
+        contrib = len(indexer.modules.get("contrib", []))
         output.append(f"✅ Module index: {total} modules ({custom} custom, {contrib} contrib)")
     else:
         output.append("⚠️  Module index: Not initialized")

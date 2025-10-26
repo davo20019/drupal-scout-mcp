@@ -15,30 +15,16 @@ import subprocess
 from pathlib import Path
 from typing import Optional, List
 
+# Import from core modules (no circular dependency)
+from src.core.config import load_config
+from src.core.drush import get_drush_command, run_drush_command
+from src.core.database import verify_database_connection
+
+# Import MCP instance from server (used for @mcp.tool() decorator)
+from server import mcp
+
 # Get logger
 logger = logging.getLogger(__name__)
-
-
-# Import the MCP instance and helper functions from server
-# This creates a circular import, but Python handles it fine since we're just
-# importing the mcp instance, not calling anything at import time
-def get_server_dependencies():
-    """Lazy import to avoid circular dependency issues."""
-    from server import (
-        mcp,
-        load_config,
-        verify_database_connection,
-        get_drush_command,
-        run_drush_command,
-    )
-
-    return mcp, load_config, verify_database_connection, get_drush_command, run_drush_command
-
-
-# Get dependencies
-mcp, load_config, verify_database_connection, get_drush_command, run_drush_command = (
-    get_server_dependencies()
-)
 
 # Note: This file contains export tools extracted from server.py
 # Import order: server.py creates mcp instance → this file imports it and registers tools
