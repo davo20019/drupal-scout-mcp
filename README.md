@@ -13,6 +13,7 @@ A Model Context Protocol server for local Drupal development. Combines local fil
 **What it does:**
 - **Local indexing**: Searches your codebase for modules, services, routes, hooks
 - **Database queries**: Runs drush php:eval to fetch entities, fields, views, taxonomy, logs
+- **Security analysis**: Pattern-based scanning for XSS, SQL injection, access control issues
 - **CSV exports**: Writes large datasets (nodes, users, taxonomy) directly to files
 - **Drupal.org search**: Finds modules, issues, and compatibility info
 - **Read-only**: Only queries data, never modifies your site
@@ -335,6 +336,89 @@ Helps: Diagnose issues, fix code problems, understand system behavior
 AI benefits: Can analyze errors and suggest fixes or next steps
 Default: Shows last 50 error/warning entries
 Use case: Debugging production issues, understanding why something broke
+```
+
+### Security Analysis Tools
+
+**security_audit** - Comprehensive security scan with multiple modes
+```
+Example: "Run security audit on my_custom_module"
+Example: "Security audit on webform module, show HIGH issues only"
+Example: "Audit the commerce module in summary mode"
+
+Scans for:
+- XSS vulnerabilities (unescaped output, unsafe render arrays)
+- SQL injection (db_query concatenation, unsafe queries)
+- Access control issues (missing permission checks)
+- Deprecated/unsafe API usage (eval, extract, Drupal 7 functions)
+
+Modes:
+- summary (default): Fast overview with counts, perfect for large modules
+- high_only: Shows only HIGH severity findings with details
+- findings: Detailed report with code snippets (respects max_findings limit)
+
+Parameters:
+- mode: "summary", "high_only", or "findings" (default: "summary")
+- severity_filter: Filter by "high", "medium", or "low"
+- max_findings: Limit results (default: 50, prevents token overflow)
+
+Smart token management: Automatically handles large modules without hitting limits
+Pattern-based: All findings are concrete code patterns, no AI guessing
+```
+
+**scan_xss** - Detect Cross-Site Scripting vulnerabilities
+```
+Example: "Scan my_module for XSS issues"
+Example: "Check custom_auth module for XSS, limit to 20 findings"
+
+Detects:
+- Unescaped print/echo statements
+- Unsafe render arrays
+- Direct superglobal output ($_GET, $_POST, etc.)
+- JavaScript innerHTML usage
+- drupal_set_message with variables
+
+Parameters: max_findings (default: 50)
+```
+
+**scan_sql_injection** - Detect SQL injection vulnerabilities
+```
+Example: "Scan my_module for SQL injection"
+
+Detects:
+- db_query with string concatenation
+- SQL queries with concatenation
+- mysqli/PDO without prepared statements
+- EntityQuery with unsanitized user input
+
+Parameters: max_findings (default: 50)
+```
+
+**scan_access_control** - Find missing access control checks
+```
+Example: "Check my_module for access control issues"
+
+Detects:
+- Routes without _permission requirements
+- Forms without access checks
+- Entity modifications without access verification
+- User data access without permission checks
+
+Parameters: max_findings (default: 50)
+```
+
+**scan_deprecated_api** - Identify deprecated or unsafe API usage
+```
+Example: "Scan my_module for deprecated APIs"
+
+Detects:
+- Drupal 7 functions in D8+ code (drupal_set_message, variable_get, etc.)
+- eval() usage
+- unserialize() with user input
+- Deprecated PHP functions (create_function, extract, assert)
+
+Parameters: max_findings (default: 50)
+Use case: Preparing modules for Drupal upgrades, security hardening
 ```
 
 ### Drupal.org Tools
