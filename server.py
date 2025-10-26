@@ -7,6 +7,7 @@ A Model Context Protocol server for discovering functionality in Drupal sites.
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional, List
 
@@ -35,11 +36,18 @@ logger = logging.getLogger(__name__)
 # Initialize FastMCP server
 mcp = FastMCP("Drupal Scout")
 
+# CRITICAL FIX: When running as __main__, tool modules import from 'server'
+# We need to ensure 'server' module points to __main__ to share the mcp instance
+if __name__ == "__main__":
+    sys.modules["server"] = sys.modules["__main__"]
+
 # Import tool modules to register @mcp.tool() decorated functions
 # IMPORTANT: Must import AFTER mcp instance is created (above)
 import src.tools.exports  # noqa: E402, F401
 import src.tools.drupal_org  # noqa: E402, F401
 import src.tools.system  # noqa: E402, F401
+
+logger.info(f"📦 Loaded {len(mcp._tool_manager._tools)} MCP tools from all modules")
 
 # Note: Core utilities (config, drush, database) moved to src/core/
 # Global state is now managed by core modules for better modularity
