@@ -1,6 +1,7 @@
 # Documentation and session files
 *.md
 !README.md
+!CHANGELOG.md
 docs/
 DEMO*.py
 SESSION*.md
