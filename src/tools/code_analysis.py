@@ -669,7 +669,7 @@ def list_module_files(
 
 @mcp.tool()
 def get_module_directory_tree(
-    module_name: str, module_path: Optional[str] = None, max_depth: int = 3
+    module_name: str, module_path: Optional[str] = None, max_depth: int = 3, max_items: int = 300
 ) -> str:
     """
     Show module directory structure as a tree.
@@ -678,7 +678,9 @@ def get_module_directory_tree(
 
     Args:
         module_name: Module/theme machine name
+        module_path: Optional explicit module path override
         max_depth: Maximum depth to show (default: 3)
+        max_items: Maximum number of items to display (default: 300, prevents token overflow)
 
     Returns:
         Directory tree visualization
@@ -686,6 +688,7 @@ def get_module_directory_tree(
     Examples:
         get_module_directory_tree("node")
         get_module_directory_tree("views", max_depth=2)
+        get_module_directory_tree("webform", max_items=200)
     """
     ensure_indexed()
 
@@ -703,9 +706,15 @@ def get_module_directory_tree(
     output.append("")
     output.append(f"{module_name}/")
 
+    items_shown = [0]  # Use list to allow mutation in nested function
+    truncated = [False]
+
     def _build_tree(path: Path, prefix: str = "", depth: int = 0):
         """Recursively build directory tree."""
-        if depth >= max_depth:
+        if depth >= max_depth or items_shown[0] >= max_items:
+            if items_shown[0] >= max_items and not truncated[0]:
+                truncated[0] = True
+                output.append(f"{prefix}... (truncated - max {max_items} items)")
             return
 
         try:
@@ -718,24 +727,43 @@ def get_module_directory_tree(
         entries = [e for e in entries if e.name not in ignore_patterns]
 
         for i, entry in enumerate(entries):
+            if items_shown[0] >= max_items:
+                if not truncated[0]:
+                    truncated[0] = True
+                    output.append(f"{prefix}... (truncated - max {max_items} items)")
+                return
+
             is_last = i == len(entries) - 1
             current_prefix = "└── " if is_last else "├── "
             next_prefix = "    " if is_last else "│   "
 
             if entry.is_dir():
                 output.append(f"{prefix}{current_prefix}{entry.name}/")
+                items_shown[0] += 1
                 _build_tree(entry, prefix + next_prefix, depth + 1)
             else:
                 # Add file with size
                 size = entry.stat().st_size
                 size_str = _format_file_size(size)
                 output.append(f"{prefix}{current_prefix}{entry.name} ({size_str})")
+                items_shown[0] += 1
 
     _build_tree(module_dir)
 
-    if max_depth < 5:
+    output.append("")
+    if truncated[0]:
+        output.append(f"⚠️  Output truncated at {max_items} items to prevent token overflow")
         output.append("")
-        output.append(f"Showing depth: {max_depth}")
+        output.append(f"To see more structure:")
+        output.append(f"  • Reduce depth: get_module_directory_tree('{module_name}', max_depth=2)")
+        output.append(
+            f"  • Increase limit: get_module_directory_tree('{module_name}', max_items=500)"
+        )
+        output.append(
+            f"  • Use list_module_files('{module_name}', pattern='src/**/*.php') for targeted browsing"
+        )
+    elif max_depth < 5:
+        output.append(f"Showing depth: {max_depth}, items: {items_shown[0]}")
         output.append(
             f"Use get_module_directory_tree('{module_name}', max_depth=5) for deeper view"
         )
