@@ -541,6 +541,59 @@ Best practices:
 - Use environment variables
 ```
 
+**verify_vulnerability** - 🎓 Explain how to manually verify security vulnerabilities
+```
+Example: "How do I verify the XSS in ai_chatbot DeepChatApi.php line 45?"
+Example: "Show me how to test the SQL injection in my_module"
+Example: "Explain how to verify this command injection vulnerability"
+
+INFORMATIONAL TOOL - Does NOT automatically execute exploits.
+Provides detailed educational content on how vulnerabilities work and how
+developers can manually test them on their OWN sites.
+
+Provides:
+- Code context showing the vulnerable line
+- Explanation of why the code is vulnerable
+- Attack flow diagrams
+- Step-by-step manual testing instructions
+- Expected results for vulnerable vs. fixed code
+- Specific remediation guidance
+- Before/after verification workflow
+
+Input (from scan results):
+- Module name, file path, line number
+- Vulnerability type (xss, sql_injection, etc.)
+- Optional route path
+
+Output:
+- Detailed explanation of the vulnerability
+- Safe, manual testing commands (NOT executed automatically)
+- Browser console testing steps
+- DDEV/Lando curl examples
+- Remediation code with examples
+- Legal and ethical warnings
+
+Use cases:
+- Understand how a vulnerability works (educational)
+- Manually verify scan findings before filing bugs
+- Learn manual penetration testing techniques
+- Verify patch effectiveness after remediation
+- Security training for development teams
+
+Example workflow:
+1. scan_xss("my_module") → Finds XSS at MyController.php:45
+2. verify_vulnerability("my_module", "xss", "MyController.php", 45, "/api/endpoint")
+3. Read the detailed explanation and testing instructions
+4. Manually run the commands in your local DDEV environment
+5. Apply the recommended fix
+6. Re-run the manual tests to confirm the fix works
+7. Run scan_xss("my_module") again to verify
+
+⚠️  For AUTHORIZED testing of YOUR OWN sites only
+⚠️  Includes legal warnings about unauthorized testing
+⚠️  Educational purpose - teaches secure coding practices
+```
+
 **Security Scanning Limitations & Best Practices**
 
 Scout's pattern-based security analysis is excellent for:
