@@ -108,24 +108,53 @@ def get_watchdog_logs(
         "debug",
     ]
 
-    args = ["watchdog:show", "--format=json", f"--count={limit}"]
-
-    # Add severity filter
+    # Try to get logs from drush
+    # NOTE: Drush watchdog:show doesn't support comma-separated severities
+    # If no severity specified, we fetch errors and warnings separately
     if severity:
         severity_lower = severity.lower()
         if severity_lower not in valid_severities:
             return f"❌ Invalid severity level: {severity}\nValid options: {', '.join(valid_severities)}"
-        args.append(f"--severity={severity_lower}")
+
+        # Single severity - simple case
+        args = ["watchdog:show", "--format=json", f"--count={limit}", f"--severity={severity_lower}"]
+        if type:
+            args.append(f"--type={type}")
+
+        result = run_drush_command(args, timeout=15)
     else:
-        # Default to errors and warnings
-        args.append("--severity=error,warning")
+        # Default to errors and warnings - need to fetch separately and combine
+        # Fetch errors first
+        error_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=error"]
+        if type:
+            error_args.append(f"--type={type}")
 
-    # Add type filter
-    if type:
-        args.append(f"--type={type}")
+        error_result = run_drush_command(error_args, timeout=15)
 
-    # Try to get logs from drush
-    result = run_drush_command(args, timeout=15)
+        # Fetch warnings
+        warning_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=warning"]
+        if type:
+            warning_args.append(f"--type={type}")
+
+        warning_result = run_drush_command(warning_args, timeout=15)
+
+        # Combine results
+        result = []
+        if error_result:
+            if isinstance(error_result, list):
+                result.extend(error_result)
+            else:
+                result.append(error_result)
+
+        if warning_result:
+            if isinstance(warning_result, list):
+                result.extend(warning_result)
+            else:
+                result.append(warning_result)
+
+        # If both failed, result will be empty list
+        if not result:
+            result = None
 
     if result is None:
         return (
