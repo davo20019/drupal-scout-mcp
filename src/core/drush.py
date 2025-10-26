@@ -5,12 +5,97 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 # Module-level cache for drush command
 _drush_command_cache: Optional[List[str]] = None
+
+
+def test_drush_connectivity() -> Tuple[bool, str, dict]:
+    """
+    Test if drush is working and can connect to the database.
+
+    Returns:
+        Tuple of (success: bool, message: str, details: dict)
+    """
+    details = {
+        "drush_found": False,
+        "drush_command": None,
+        "drush_version": None,
+        "database_connected": False,
+        "drupal_version": None,
+    }
+
+    # Check if drush command is found
+    drush_cmd = get_drush_command()
+    if not drush_cmd:
+        return False, "Drush command not found", details
+
+    details["drush_found"] = True
+    details["drush_command"] = " ".join(drush_cmd)
+
+    # Try to get drush version
+    try:
+        from src.core.config import get_config
+
+        config = get_config()
+        drupal_root = Path(config.get("drupal_root"))
+
+        result = subprocess.run(
+            [*drush_cmd, "version", "--format=json"],
+            cwd=str(drupal_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            version_data = json.loads(result.stdout)
+            details["drush_version"] = version_data.get("drush-version", "unknown")
+    except Exception as e:
+        logger.debug(f"Could not get drush version: {e}")
+
+    # Try to connect to database
+    try:
+        result = subprocess.run(
+            [*drush_cmd, "status", "--format=json"],
+            cwd=str(drupal_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            status = json.loads(result.stdout)
+            db_status = status.get("db-status")
+            details["database_connected"] = db_status == "Connected"
+            details["drupal_version"] = status.get("drupal-version")
+
+            if details["database_connected"]:
+                return (
+                    True,
+                    f"✅ Drush working (version {details.get('drush_version', 'unknown')}), database connected",
+                    details,
+                )
+            else:
+                return (
+                    False,
+                    f"Drush found but database not connected (status: {db_status})",
+                    details,
+                )
+        else:
+            return (
+                False,
+                f"Drush command failed: {result.stderr.strip()}",
+                details,
+            )
+
+    except subprocess.TimeoutExpired:
+        return False, "Drush command timed out (database might be slow)", details
+    except Exception as e:
+        return False, f"Error testing drush: {str(e)}", details
 
 
 def get_drush_command() -> Optional[List[str]]:
@@ -46,47 +131,90 @@ def _detect_drush_command() -> Optional[List[str]]:
     # Import here to avoid circular dependency
     from src.core.config import ensure_indexed, get_config
 
+    logger.info("🔍 Starting drush detection...")
+
     ensure_indexed()  # Make sure config is loaded
     config = get_config()
 
     drupal_root = Path(config.get("drupal_root"))
+    logger.info(f"   Drupal root: {drupal_root}")
+    logger.info(f"   Root exists: {drupal_root.exists()}")
 
     # 1. User explicitly configured drush command
     if config.get("drush_command"):
         cmd = config["drush_command"].split()
-        logger.info(f"Using configured drush command: {' '.join(cmd)}")
+        logger.info(f"✅ Using configured drush command: {' '.join(cmd)}")
+        logger.info("   (from config.json drush_command setting)")
         return cmd
+    else:
+        logger.info("   No drush_command in config.json, trying auto-detection...")
 
     # 2. Auto-detect development environment
+    logger.info("   Checking for development environments...")
 
     # DDEV
-    if (drupal_root / ".ddev" / "config.yaml").exists():
-        logger.info("Detected DDEV environment")
-        return ["ddev", "drush"]
+    ddev_config = drupal_root / ".ddev" / "config.yaml"
+    logger.info(f"   DDEV config ({ddev_config}): {ddev_config.exists()}")
+    if ddev_config.exists():
+        # Verify ddev is actually available
+        if shutil.which("ddev"):
+            logger.info("✅ Detected DDEV environment (ddev command found)")
+            return ["ddev", "drush"]
+        else:
+            logger.warning("⚠️  Found .ddev/config.yaml but 'ddev' command not in PATH")
+            logger.warning("   Install DDEV or add to PATH: https://ddev.readthedocs.io/")
 
     # Lando
-    if (drupal_root / ".lando.yml").exists():
-        logger.info("Detected Lando environment")
-        return ["lando", "drush"]
+    lando_config = drupal_root / ".lando.yml"
+    logger.info(f"   Lando config ({lando_config}): {lando_config.exists()}")
+    if lando_config.exists():
+        if shutil.which("lando"):
+            logger.info("✅ Detected Lando environment (lando command found)")
+            return ["lando", "drush"]
+        else:
+            logger.warning("⚠️  Found .lando.yml but 'lando' command not in PATH")
 
     # Docksal
-    if (drupal_root / ".docksal").exists():
-        logger.info("Detected Docksal environment")
-        return ["fin", "drush"]
+    docksal_dir = drupal_root / ".docksal"
+    logger.info(f"   Docksal dir ({docksal_dir}): {docksal_dir.exists()}")
+    if docksal_dir.exists():
+        if shutil.which("fin"):
+            logger.info("✅ Detected Docksal environment (fin command found)")
+            return ["fin", "drush"]
+        else:
+            logger.warning("⚠️  Found .docksal directory but 'fin' command not in PATH")
 
     # 3. Check for Composer-installed drush in vendor/bin
     vendor_drush = drupal_root / "vendor" / "bin" / "drush"
+    logger.info(f"   Composer drush ({vendor_drush}): {vendor_drush.exists()}")
     if vendor_drush.exists() and vendor_drush.is_file():
-        logger.info(f"Using Composer drush: {vendor_drush}")
+        logger.info(f"✅ Using Composer drush: {vendor_drush}")
         return [str(vendor_drush)]
 
     # 4. Check for global drush
-    if shutil.which("drush"):
-        logger.info("Using global drush")
+    global_drush = shutil.which("drush")
+    logger.info(f"   Global drush: {global_drush or 'not found'}")
+    if global_drush:
+        logger.info(f"✅ Using global drush: {global_drush}")
         return ["drush"]
 
-    # No drush found
-    logger.warning("Drush not found in any expected location")
+    # No drush found - provide helpful debugging info
+    logger.error("❌ Drush not found in any expected location")
+    logger.error("")
+    logger.error("🔧 TROUBLESHOOTING:")
+    logger.error("   1. Add drush_command to config.json:")
+    logger.error('      "drush_command": "ddev drush"')
+    logger.error("")
+    logger.error("   2. Ensure your dev environment is running:")
+    logger.error("      - DDEV: ddev start")
+    logger.error("      - Lando: lando start")
+    logger.error("")
+    logger.error("   3. Install drush globally:")
+    logger.error("      composer global require drush/drush")
+    logger.error("")
+    logger.error(f"   4. Verify drupal_root in config.json: {drupal_root}")
+    logger.error("")
+
     return None
 
 

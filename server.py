@@ -22,7 +22,7 @@ from src.core.config import (
     ensure_indexed,
     reset_index,
 )
-from src.core.drush import get_drush_command, run_drush_command
+from src.core.drush import run_drush_command
 from src.core.database import verify_database_connection, check_module_enabled
 
 # Existing modules
@@ -3325,42 +3325,74 @@ def check_scout_health() -> str:
 
     output = ["🏥 SCOUT HEALTH CHECK\n", "=" * 60, ""]
 
-    # 1. Check Drush
-    drush_cmd = get_drush_command()
-    if drush_cmd:
-        output.append(f"✅ Drush: Found ({' '.join(drush_cmd)})")
+    # 1. Test Drush Connectivity (comprehensive check)
+    from src.core.drush import test_drush_connectivity
+
+    output.append("1️⃣ DRUSH CONNECTIVITY TEST")
+    output.append("")
+
+    drush_ok, drush_msg, drush_details = test_drush_connectivity()
+
+    if drush_ok:
+        output.append(f"✅ {drush_msg}")
+        if drush_details.get("drush_command"):
+            output.append(f"   Command: {drush_details['drush_command']}")
+        if drush_details.get("drush_version"):
+            output.append(f"   Drush version: {drush_details['drush_version']}")
+        if drush_details.get("drupal_version"):
+            output.append(f"   Drupal version: {drush_details['drupal_version']}")
     else:
-        output.append("❌ Drush: NOT FOUND")
-        output.append("   Scout cannot access the database without drush.")
-        output.append("   Install drush or configure drush_command in config.json")
+        output.append(f"❌ {drush_msg}")
         output.append("")
-        output.append("IMPACT: Database-dependent features will NOT work:")
-        output.append("  • Taxonomy usage analysis")
-        output.append("  • Watchdog logs")
-        output.append("  • Entity structure queries")
-        output.append("  • Views information")
+
+        if not drush_details.get("drush_found"):
+            output.append("🔧 TROUBLESHOOTING - Drush Not Found:")
+            output.append("")
+            output.append("Option 1: Configure drush_command in config.json")
+            output.append("   Add this to your config.json:")
+            output.append('   "drush_command": "ddev drush"')
+            output.append("")
+            output.append("Option 2: Ensure dev environment is running")
+            output.append("   • DDEV: ddev start && ddev drush status")
+            output.append("   • Lando: lando start && lando drush status")
+            output.append("")
+            output.append("Option 3: Install drush globally")
+            output.append("   composer global require drush/drush")
+            output.append("")
+        elif not drush_details.get("database_connected"):
+            output.append("🔧 TROUBLESHOOTING - Database Not Connected:")
+            output.append("")
+            output.append("1. Verify dev environment is running:")
+            output.append(f"   {drush_details['drush_command']} status")
+            output.append("")
+            output.append("2. Check database credentials in settings.php")
+            output.append("")
+            output.append("3. For DDEV users:")
+            output.append("   • ddev describe (check database info)")
+            output.append("   • ddev logs (check for errors)")
+            output.append("")
+
+        output.append("⚠️  IMPACT: Database-dependent features will NOT work:")
+        output.append("  • get_taxonomy_info() - Taxonomy usage analysis")
+        output.append("  • get_watchdog_logs() - Error/warning logs")
+        output.append("  • get_entity_structure() - Entity/field queries")
+        output.append("  • get_views_summary() - Views configuration")
+        output.append("  • get_field_info() - Field information")
+        output.append("")
+        output.append("✅ WHAT STILL WORKS (12 out of 23 tools):")
+        output.append("  • search_functionality() - Module search")
+        output.append("  • list_modules() - List all modules")
+        output.append("  • describe_module() - Module details")
+        output.append("  • search_drupal_org() - Drupal.org search")
+        output.append("  • find_unused_contrib() - Find unused modules")
+        output.append("  • check_redundancy() - Detect duplicate functionality")
+        output.append("")
         return "\n".join(output)
 
-    # 2. Check Database Connection
+    # 2. Additional Checks
     output.append("")
-    db_ok, db_msg = verify_database_connection()
-    if db_ok:
-        output.append(f"✅ Database: {db_msg}")
-    else:
-        output.append(f"❌ Database: {db_msg}")
-        output.append("")
-        output.append("TROUBLESHOOTING:")
-        output.append("  1. Verify your dev environment is running:")
-        output.append("     • DDEV: ddev start")
-        output.append("     • Lando: lando start")
-        output.append("  2. Check drush status: drush status")
-        output.append("  3. Verify database credentials in settings.php")
-        output.append("")
-        output.append("IMPACT: Database-dependent features will NOT work:")
-        output.append("  • Taxonomy usage analysis")
-        output.append("  • Watchdog logs")
-        output.append("  • Entity/field/views queries")
-        return "\n".join(output)
+    output.append("2️⃣ ADDITIONAL CHECKS")
+    output.append("")
 
     # 3. Check DBLog module
     output.append("")
@@ -3397,7 +3429,7 @@ def check_scout_health() -> str:
     # Overall status
     output.append("")
     output.append("=" * 60)
-    if drush_cmd and db_ok:
+    if drush_ok:
         output.append("✅ OVERALL STATUS: HEALTHY")
         output.append("")
         output.append("Scout is fully operational. All database-dependent features are available:")
@@ -3419,15 +3451,47 @@ def check_scout_health() -> str:
 
 def main():
     """Main entry point for the MCP server."""
-    logger.info("Starting Drupal Scout MCP Server")
+    logger.info("=" * 70)
+    logger.info("🚀 Starting Drupal Scout MCP Server")
+    logger.info("=" * 70)
 
     # Pre-index if config exists
     try:
         ensure_indexed()
-        logger.info("Initial indexing complete")
+        logger.info("✅ Initial indexing complete")
     except Exception as e:
-        logger.warning(f"Could not pre-index: {e}")
-        logger.info("Will index on first request")
+        logger.warning(f"⚠️  Could not pre-index: {e}")
+        logger.info("   Will index on first request")
+
+    # Test drush connectivity on startup
+    logger.info("")
+    logger.info("🔍 Testing drush connectivity...")
+    try:
+        from src.core.drush import test_drush_connectivity
+
+        drush_ok, drush_msg, drush_details = test_drush_connectivity()
+        if drush_ok:
+            logger.info(f"✅ {drush_msg}")
+            if drush_details.get("drupal_version"):
+                logger.info(f"   Drupal {drush_details['drupal_version']}")
+        else:
+            logger.warning(f"⚠️  {drush_msg}")
+            logger.warning("")
+            logger.warning("   Some database-dependent tools may not work.")
+            logger.warning("   Run check_scout_health() for detailed diagnostics.")
+            logger.warning("")
+            if not drush_details.get("drush_found"):
+                logger.warning("   💡 Quick fix: Add to config.json:")
+                logger.warning('      "drush_command": "ddev drush"')
+            logger.warning("")
+    except Exception as e:
+        logger.warning(f"⚠️  Could not test drush: {e}")
+
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("✅ Server ready - Listening for MCP requests")
+    logger.info("=" * 70)
+    logger.info("")
 
     # Run the server
     mcp.run()
