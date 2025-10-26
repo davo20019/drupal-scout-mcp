@@ -47,8 +47,6 @@ import src.tools.exports  # noqa: E402, F401
 import src.tools.drupal_org  # noqa: E402, F401
 import src.tools.system  # noqa: E402, F401
 
-logger.info(f"📦 Loaded {len(mcp._tool_manager._tools)} MCP tools from all modules")
-
 # Note: Core utilities (config, drush, database) moved to src/core/
 # Global state is now managed by core modules for better modularity
 #
@@ -2579,6 +2577,7 @@ def main():
     # Note: Pre-indexing and drush testing moved to lazy initialization
     # to avoid delaying MCP server startup which can cause connection issues
     logger.info("🚀 Starting Drupal Scout MCP Server...")
+    logger.info(f"   📦 {len(mcp._tool_manager._tools)} tools registered")
     logger.info("   (Modules will be indexed on first request)")
 
     # Run the server
