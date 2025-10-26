@@ -1019,7 +1019,35 @@ AI: "Perfect! The export now includes all custom profile fields. You can use thi
 
 ## Configuration
 
-### Basic Configuration
+### Quick Start (Recommended for MCP)
+
+**For DDEV users:**
+```json
+{
+  "drupal_root": "/path/to/your/drupal",
+  "drush_command": "ddev drush"
+}
+```
+
+**For Lando users:**
+```json
+{
+  "drupal_root": "/path/to/your/drupal",
+  "drush_command": "lando drush"
+}
+```
+
+**For Docksal users:**
+```json
+{
+  "drupal_root": "/path/to/your/drupal",
+  "drush_command": "fin drush"
+}
+```
+
+> **💡 TIP:** When using Scout via MCP (Cursor, Claude Desktop), explicitly setting `drush_command` is **highly recommended** to avoid auto-detection issues. MCP runs in a different environment than your terminal and may not find development tools in PATH.
+
+### Basic Configuration (Minimal)
 ```json
 {
   "drupal_root": "/var/www/drupal",
@@ -1027,39 +1055,77 @@ AI: "Perfect! The export now includes all custom profile fields. You can use thi
 }
 ```
 
+Scout will attempt to auto-detect drush, but this may fail in MCP environments.
+
 ### Advanced Options
 ```json
 {
   "drupal_root": "/var/www/drupal",
   "modules_path": "modules",
   "exclude_patterns": ["node_modules", "vendor"],
-  "drush_command": "drush"
+  "drush_command": "ddev drush"
 }
 ```
 
-### Drush Configuration
+### Drush Configuration (Important!)
 
-Some tools require drush (e.g., `get_entity_structure`). The MCP auto-detects drush in common environments:
+**11 out of 23 tools require drush** to access the Drupal database:
+- `get_taxonomy_info()` - Taxonomy usage analysis
+- `get_entity_structure()` - Entity/bundle information
+- `get_field_info()` - Field configurations
+- `get_views_summary()` - Views details
+- `get_watchdog_logs()` - Error/warning logs
+- `export_taxonomy_usage_to_csv()` - CSV exports
+- `export_nodes_to_csv()` - CSV exports
+- `export_users_to_csv()` - CSV exports
+- And more...
 
-**Auto-detected environments:**
-- DDEV: `ddev drush`
-- Lando: `lando drush`
-- Docksal: `fin drush`
-- Composer: `vendor/bin/drush`
-- Global: `drush`
+**Auto-detection (may fail in MCP):**
 
-**Manual override (if auto-detection fails):**
+Scout attempts to auto-detect drush in this order:
+1. User config (`drush_command` in config.json) ← **Use this for MCP!**
+2. DDEV: `ddev drush` (if `.ddev/config.yaml` exists and `ddev` in PATH)
+3. Lando: `lando drush` (if `.lando.yml` exists and `lando` in PATH)
+4. Docksal: `fin drush` (if `.docksal/` exists and `fin` in PATH)
+5. Composer: `vendor/bin/drush` (if file exists)
+6. Global: `drush` (if in PATH)
+
+**Manual override (recommended for MCP):**
+
 ```json
 {
   "drush_command": "ddev drush"
 }
 ```
 
-**Examples:**
+**Common examples:**
 - DDEV: `"drush_command": "ddev drush"`
 - Lando: `"drush_command": "lando drush"`
+- Docksal: `"drush_command": "fin drush"`
 - Custom Docker: `"drush_command": "docker-compose exec php drush"`
 - SSH remote: `"drush_command": "ssh user@host drush"`
+- Absolute path: `"drush_command": "/path/to/vendor/bin/drush"`
+
+### Troubleshooting Database Connectivity
+
+If database-dependent tools aren't working, run:
+```
+check_scout_health()
+```
+
+This will show exactly what's wrong and how to fix it.
+
+**Common issues:**
+- ❌ `[Errno 2] No such file or directory: 'ddev'`
+  → Add `"drush_command": "ddev drush"` to config.json
+
+- ❌ `Drush found but database not connected`
+  → Ensure dev environment is running: `ddev start`
+
+- ⚠️ `Drush not found in any expected location`
+  → Add explicit `drush_command` to config.json
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for comprehensive solutions.
 
 ## Performance
 
