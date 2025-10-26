@@ -96,6 +96,14 @@ if total_tools < 23:
         print(f"    - Same as server.mcp? {src.tools.taxonomy.mcp is server.mcp}")
     except Exception as e:
         print(f"  ✗ src.tools.taxonomy failed: {e}")
+
+    try:
+        import src.tools.views
+        print("  ✓ src.tools.views imported")
+        print(f"    - views.mcp ID: {id(src.tools.views.mcp)}")
+        print(f"    - Same as server.mcp? {src.tools.views.mcp is server.mcp}")
+    except Exception as e:
+        print(f"  ✗ src.tools.views failed: {e}")
 else:
     print("✅ All 23 tools loaded successfully!")
 
@@ -110,6 +118,7 @@ system_tools = ['get_watchdog_logs', 'check_scout_health']
 export_tools = ['export_taxonomy_usage_to_csv', 'export_nodes_to_csv', 'export_users_to_csv']
 entity_tools = ['get_entity_structure', 'get_field_info']
 taxonomy_tools = ['get_taxonomy_info', 'get_all_taxonomy_usage']
+views_tools = ['get_views_summary']
 
 tools = sorted(server.mcp._tool_manager._tools.keys())
 
@@ -118,14 +127,16 @@ system_count = sum(1 for t in tools if t in system_tools)
 export_count = sum(1 for t in tools if t in export_tools)
 entity_count = sum(1 for t in tools if t in entity_tools)
 taxonomy_count = sum(1 for t in tools if t in taxonomy_tools)
-server_count = total_tools - drupal_org_count - system_count - export_count - entity_count - taxonomy_count
+views_count = sum(1 for t in tools if t in views_tools)
+server_count = total_tools - drupal_org_count - system_count - export_count - entity_count - taxonomy_count - views_count
 
-print(f"  server.py: {server_count}/9 tools")
+print(f"  server.py: {server_count}/8 tools")
 print(f"  drupal_org.py: {drupal_org_count}/5 tools")
 print(f"  system.py: {system_count}/2 tools")
 print(f"  exports.py: {export_count}/3 tools")
 print(f"  entities.py: {entity_count}/2 tools")
 print(f"  taxonomy.py: {taxonomy_count}/2 tools")
+print(f"  views.py: {views_count}/1 tool")
 
 if drupal_org_count < 5:
     print("\n❌ Missing drupal_org tools:")
@@ -154,6 +165,12 @@ if entity_count < 2:
 if taxonomy_count < 2:
     print("\n❌ Missing taxonomy tools:")
     for t in taxonomy_tools:
+        if t not in tools:
+            print(f"  - {t}")
+
+if views_count < 1:
+    print("\n❌ Missing views tools:")
+    for t in views_tools:
         if t not in tools:
             print(f"  - {t}")
 
