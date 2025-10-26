@@ -30,6 +30,58 @@ logger = logging.getLogger(__name__)
 # Import order: server.py creates mcp instance → this file imports it and registers tools
 
 
+def _validate_export_path(path: str, drupal_root: Path) -> tuple[bool, str]:
+    """
+    Validate that export path is within safe boundaries.
+
+    This prevents accidental writes to sensitive system directories.
+    Allows writing to:
+    - Drupal root and subdirectories
+    - /tmp and /var/tmp
+    - User's home directory
+
+    Args:
+        path: The requested export path
+        drupal_root: Drupal installation root
+
+    Returns:
+        Tuple of (is_valid: bool, error_message: str)
+    """
+    try:
+        # Resolve to absolute path to catch path traversal attempts
+        export_path = Path(path).resolve()
+
+        # Define safe root directories
+        safe_roots = [
+            drupal_root.resolve(),  # Drupal root
+            Path("/tmp"),  # Temporary directory
+            Path("/var/tmp"),  # Alternative temp directory
+            Path.home(),  # User's home directory
+        ]
+
+        # Check if export path is within any safe root
+        for safe_root in safe_roots:
+            try:
+                # Check if export_path is within safe_root
+                export_path.relative_to(safe_root)
+                return True, ""
+            except ValueError:
+                # Not within this safe root, try next
+                continue
+
+        # Path is not within any safe root
+        safe_locations = "\n  - ".join([str(r) for r in safe_roots])
+        return (
+            False,
+            f"Export path must be within safe locations:\n  - {safe_locations}\n\n"
+            f"Requested path: {export_path}\n\n"
+            f"Use a path within Drupal root or /tmp for security.",
+        )
+
+    except Exception as e:
+        return False, f"Invalid path: {str(e)}"
+
+
 @mcp.tool()
 def export_taxonomy_usage_to_csv(
     vocabulary: str,
@@ -166,6 +218,11 @@ def export_taxonomy_usage_to_csv(
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             # Save in Drupal root directory for easy access in IDE
             output_path = str(drupal_root / f"taxonomy_export_{vocabulary}_{timestamp}.csv")
+
+        # Validate path is within safe boundaries
+        is_valid, error_msg = _validate_export_path(output_path, drupal_root)
+        if not is_valid:
+            return json.dumps({"_error": True, "message": f"Invalid export path: {error_msg}"})
 
         # Validate path is writable
         output_file = Path(output_path)
@@ -488,6 +545,11 @@ def export_nodes_to_csv(
             type_suffix = f"_{content_type}" if content_type else "_all"
             output_path = str(drupal_root / f"nodes_export{type_suffix}_{timestamp}.csv")
 
+        # Validate path is within safe boundaries
+        is_valid, error_msg = _validate_export_path(output_path, drupal_root)
+        if not is_valid:
+            return json.dumps({"_error": True, "message": f"Invalid export path: {error_msg}"})
+
         # Validate path is writable
         output_file = Path(output_path)
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -797,6 +859,11 @@ def export_users_to_csv(
         if not output_path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_path = str(drupal_root / f"users_export_{timestamp}.csv")
+
+        # Validate path is within safe boundaries
+        is_valid, error_msg = _validate_export_path(output_path, drupal_root)
+        if not is_valid:
+            return json.dumps({"_error": True, "message": f"Invalid export path: {error_msg}"})
 
         # Validate path is writable
         output_file = Path(output_path)

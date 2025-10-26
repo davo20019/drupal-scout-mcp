@@ -1010,6 +1010,84 @@ AI: "Perfect! The export now includes all custom profile fields. You can use thi
 - Works with any dev environment (DDEV, Lando, etc.)
 - AI can adapt to errors better than hardcoded commands
 
+## Security Considerations
+
+Drupal Scout is designed as a **development tool for trusted local environments**. Please review these security considerations:
+
+### Trusted Drupal Installations Only
+
+**Drush PHP Execution:**
+- Drupal Scout executes PHP code via `drush eval` to query the database
+- This has the same permissions as your Drupal database user
+- Can read any data accessible to your Drupal installation
+
+**Recommendation:**
+- ✅ Use with Drupal sites you control and trust
+- ✅ Perfect for local development environments (DDEV, Lando, Docker)
+- ❌ Not intended for untrusted or compromised Drupal installations
+
+### Configuration Security
+
+**Config File Location:**
+- Config stored at `~/.config/drupal-scout/config.json`
+- May contain sensitive paths and settings
+- File permissions should restrict to your user account
+
+**Recommendations:**
+- ✅ Keep config.json in your home directory (default location)
+- ❌ Do not commit config.json to version control
+- ✅ Add `config.json` to `.gitignore` if creating project-specific configs
+- ✅ Use environment-specific paths (don't share configs between developers)
+
+### Export File Security
+
+**CSV Export Paths:**
+- Export tools write CSV files to the filesystem
+- Paths are validated to prevent writing to system directories
+- Allowed locations:
+  - Drupal root and subdirectories
+  - `/tmp` and `/var/tmp`
+  - User's home directory
+
+**What This Prevents:**
+- ❌ Writing to `/etc/` or other system directories
+- ❌ Path traversal attacks (`../../../etc/passwd`)
+- ❌ Accidental overwrites of critical system files
+
+**Recommendations:**
+- ✅ Use default paths (Drupal root) for easy access in IDE
+- ✅ Use `/tmp` for temporary exports
+- ⚠️  Be mindful of exported data (may contain user emails, content)
+
+### Development Tool Context
+
+**Important:**
+- Drupal Scout is a **development tool**, not a production service
+- Assumes a trusted local environment
+- No authentication/authorization layer (by design)
+- Should not be exposed to untrusted networks
+- Uses MCP protocol (STDIO) - typically local use only
+
+**Recommendations:**
+- ✅ Use for local development and staging environments
+- ✅ Use with your own Drupal installations
+- ❌ Do not expose to public networks
+- ❌ Do not use with untrusted Drupal installations
+
+### What Drupal Scout Does NOT Do
+
+**Read-Only by Design:**
+- Does not modify database content
+- Does not change files in your codebase
+- Does not execute user-provided PHP/SQL directly
+- Does not install/uninstall modules (AI does this via separate commands)
+
+**Secure Subprocess Usage:**
+- All drush commands use safe subprocess.run() (no shell=True)
+- Commands passed as lists, not strings
+- Timeouts on all subprocess calls
+- No user input passed directly to shell
+
 ## Requirements
 
 - Python 3.10 or higher

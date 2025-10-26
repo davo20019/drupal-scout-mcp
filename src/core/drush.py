@@ -15,59 +15,46 @@ logger = logging.getLogger(__name__)
 _drush_command_cache: Optional[List[str]] = None
 
 
-def test_drush_connectivity() -> Tuple[bool, str, dict]:
+def _setup_drush_environment() -> dict:
     """
-    Test if drush is working and can connect to the database.
+    Setup environment with extended PATH for drush execution.
+
+    MCP servers may have limited PATH, missing ddev/docker/lando/fin.
+    This function ensures common tool locations are included.
 
     Returns:
-        Tuple of (success: bool, message: str, details: dict)
+        Environment dict with extended PATH
     """
-    details = {
-        "drush_found": False,
-        "drush_command": None,
-        "drush_version": None,
-        "database_connected": False,
-        "drupal_version": None,
-    }
-
-    # Check if drush command is found
-    drush_cmd = get_drush_command()
-    if not drush_cmd:
-        return False, "Drush command not found", details
-
-    details["drush_found"] = True
-    details["drush_command"] = " ".join(drush_cmd)
-
-    # Ensure PATH includes common tool locations when running via MCP
-    # MCP servers may have limited PATH, missing ddev/docker/lando/fin
     env = os.environ.copy()
 
     # Detect platform for path separator
-    is_windows = platform.system() == 'Windows'
-    path_sep = ';' if is_windows else ':'
+    is_windows = platform.system() == "Windows"
+    path_sep = ";" if is_windows else ":"
 
     # Add standard system paths if not already present
     # Ordered by likelihood of containing dev tools
     standard_paths = [
-        "/usr/local/bin",           # Standard Unix (Intel Mac, Linux, Composer global)
-        "/opt/homebrew/bin",        # Homebrew on Apple Silicon Mac
-        "/usr/bin",                 # System binaries (all Unix-like)
-        "/bin",                     # Core system binaries (all Unix-like)
-        "/opt/local/bin",           # MacPorts on Mac
-        "/snap/bin",                # Snap packages on Linux
+        "/usr/local/bin",  # Standard Unix (Intel Mac, Linux, Composer global)
+        "/opt/homebrew/bin",  # Homebrew on Apple Silicon Mac
+        "/usr/bin",  # System binaries (all Unix-like)
+        "/bin",  # Core system binaries (all Unix-like)
+        "/opt/local/bin",  # MacPorts on Mac
+        "/snap/bin",  # Snap packages on Linux
         "/var/lib/flatpak/exports/bin",  # Flatpak on Linux
         str(Path.home() / ".local" / "bin"),  # User-local binaries (Linux/Mac)
-        str(Path.home() / "bin"),   # User bin directory
+        str(Path.home() / "bin"),  # User bin directory
     ]
 
     # Add Windows/WSL specific paths
     if is_windows or Path("/mnt/c").exists():  # WSL detected
-        standard_paths.extend([
-            "C:\\Program Files\\DDEV",
-            "C:\\ProgramData\\chocolatey\\bin",
-            "/mnt/c/Program Files/DDEV",  # WSL mount
-            "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
-        ])
+        standard_paths.extend(
+            [
+                "C:\\Program Files\\DDEV",
+                "C:\\ProgramData\\chocolatey\\bin",
+                "/mnt/c/Program Files/DDEV",  # WSL mount
+                "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
+            ]
+        )
 
     # Add version manager paths (nvm, asdf, mise, etc.)
     # These have dynamic paths, so we check if the base directories exist
@@ -98,16 +85,41 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
     if pyenv_shims.exists():
         standard_paths.append(str(pyenv_shims))
 
-    current_path = env.get('PATH', '')
+    current_path = env.get("PATH", "")
     # Only add paths that exist and aren't already in PATH
-    paths_to_add = [
-        p for p in standard_paths
-        if p not in current_path and Path(p).exists()
-    ]
+    paths_to_add = [p for p in standard_paths if p not in current_path and Path(p).exists()]
 
     if paths_to_add:
-        env['PATH'] = path_sep.join(paths_to_add) + path_sep + current_path
+        env["PATH"] = path_sep.join(paths_to_add) + path_sep + current_path
 
+    return env
+
+
+def test_drush_connectivity() -> Tuple[bool, str, dict]:
+    """
+    Test if drush is working and can connect to the database.
+
+    Returns:
+        Tuple of (success: bool, message: str, details: dict)
+    """
+    details = {
+        "drush_found": False,
+        "drush_command": None,
+        "drush_version": None,
+        "database_connected": False,
+        "drupal_version": None,
+    }
+
+    # Check if drush command is found
+    drush_cmd = get_drush_command()
+    if not drush_cmd:
+        return False, "Drush command not found", details
+
+    details["drush_found"] = True
+    details["drush_command"] = " ".join(drush_cmd)
+
+    # Setup environment with extended PATH for drush
+    env = _setup_drush_environment()
 
     # Try to get drush version
     try:
@@ -329,75 +341,8 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
     try:
         logger.debug(f"Running: {' '.join(full_cmd)}")
 
-        # Ensure PATH includes common tool locations when running via MCP
-        # MCP servers may have limited PATH, missing ddev/docker/lando/fin
-        env = os.environ.copy()
-
-        # Detect platform for path separator
-        is_windows = platform.system() == 'Windows'
-        path_sep = ';' if is_windows else ':'
-
-        # Add standard system paths if not already present
-        # Ordered by likelihood of containing dev tools
-        standard_paths = [
-            "/usr/local/bin",           # Standard Unix (Intel Mac, Linux, Composer global)
-            "/opt/homebrew/bin",        # Homebrew on Apple Silicon Mac
-            "/usr/bin",                 # System binaries (all Unix-like)
-            "/bin",                     # Core system binaries (all Unix-like)
-            "/opt/local/bin",           # MacPorts on Mac
-            "/snap/bin",                # Snap packages on Linux
-            "/var/lib/flatpak/exports/bin",  # Flatpak on Linux
-            str(Path.home() / ".local" / "bin"),  # User-local binaries (Linux/Mac)
-            str(Path.home() / "bin"),   # User bin directory
-        ]
-
-        # Add Windows/WSL specific paths
-        if is_windows or Path("/mnt/c").exists():  # WSL detected
-            standard_paths.extend([
-                "C:\\Program Files\\DDEV",
-                "C:\\ProgramData\\chocolatey\\bin",
-                "/mnt/c/Program Files/DDEV",  # WSL mount
-                "/mnt/c/ProgramData/chocolatey/bin",  # WSL mount
-            ])
-
-        # Add version manager paths (nvm, asdf, mise, etc.)
-        # These have dynamic paths, so we check if the base directories exist
-        home = Path.home()
-
-        # Check for nvm (Node Version Manager)
-        nvm_current = home / ".nvm" / "current" / "bin"
-        if nvm_current.exists():
-            standard_paths.append(str(nvm_current))
-
-        # Check for asdf version manager
-        asdf_shims = home / ".asdf" / "shims"
-        if asdf_shims.exists():
-            standard_paths.append(str(asdf_shims))
-
-        # Check for mise (formerly rtx)
-        mise_shims = home / ".local" / "share" / "mise" / "shims"
-        if mise_shims.exists():
-            standard_paths.append(str(mise_shims))
-
-        # Check for rbenv (Ruby version manager)
-        rbenv_shims = home / ".rbenv" / "shims"
-        if rbenv_shims.exists():
-            standard_paths.append(str(rbenv_shims))
-
-        # Check for pyenv (Python version manager)
-        pyenv_shims = home / ".pyenv" / "shims"
-        if pyenv_shims.exists():
-            standard_paths.append(str(pyenv_shims))
-
-        current_path = env.get('PATH', '')
-        # Only add paths that exist and aren't already in PATH
-        paths_to_add = [
-            p for p in standard_paths
-            if p not in current_path and Path(p).exists()
-        ]
-
-        if paths_to_add:
-            env['PATH'] = path_sep.join(paths_to_add) + path_sep + current_path
+        # Setup environment with extended PATH for drush
+        env = _setup_drush_environment()
 
         result = subprocess.run(
             full_cmd,
