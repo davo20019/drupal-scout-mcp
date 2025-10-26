@@ -5,6 +5,7 @@ Provides tools for system diagnostics and error analysis:
 - get_watchdog_logs: Get Drupal watchdog logs for debugging
 - check_scout_health: Verify Scout's database connectivity and health
 - get_available_updates: Get report of available updates for Drupal core and contrib modules
+- get_status_report: Get Drupal status report with errors, warnings, and recommendations
 
 These tools help monitor and troubleshoot the Drupal site.
 """
@@ -793,6 +794,288 @@ def get_available_updates(include_dev: bool = False, security_only: bool = False
     output.append("This is a READ-ONLY report. Updates are NOT automatically applied.")
     output.append("To apply updates, use the composer commands shown above or ask the AI")
     output.append("assistant to help update specific packages.")
+    output.append("")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def get_status_report(
+    severity_filter: Optional[str] = None, include_ok: bool = False
+) -> str:
+    """
+    Get Drupal status report showing system health, errors, warnings, and recommendations.
+
+    This tool fetches the same information shown on /admin/reports/status page,
+    helping AI assistants diagnose and fix site issues without requiring login.
+
+    Perfect for:
+    - Identifying configuration issues
+    - Security vulnerability detection
+    - Performance and optimization recommendations
+    - Module-specific setup problems
+    - File permission issues
+    - Database and PHP configuration checks
+
+    The tool uses drush core:requirements to fetch:
+    - Errors (severity 2) - Critical issues requiring immediate attention
+    - Warnings (severity 1) - Important issues that should be addressed
+    - Info (severity -1) - Informational messages
+    - OK (severity 0) - Everything working correctly
+
+    Common use cases:
+    - "What errors are on the status report?"
+    - "Check the site health"
+    - "Why is the status report showing warnings?"
+    - "Diagnose configuration issues"
+    - "What security issues exist?"
+
+    Args:
+        severity_filter: Optional filter by severity level.
+                        Options: "error", "warning", "info", "ok"
+                        Default: Shows errors and warnings only
+        include_ok: Include successful checks in report (default: False)
+                   When True, shows all checks including those that passed
+
+    Returns:
+        Formatted status report with issues categorized by severity,
+        including descriptions and recommended actions
+
+    Examples:
+        get_status_report()  # Errors and warnings only
+        get_status_report(severity_filter="error")  # Only errors
+        get_status_report(include_ok=True)  # All checks including successful ones
+        get_status_report(severity_filter="warning")  # Only warnings
+
+    Note: Requires drush connectivity. This is equivalent to visiting
+          /admin/reports/status but accessible via AI without login.
+    """
+    ensure_indexed()
+
+    output = []
+    output.append("🏥 DRUPAL STATUS REPORT\n")
+    output.append("=" * 80)
+    output.append("")
+
+    # Run drush core:requirements
+    result = run_drush_command(["core:requirements", "--format=json"], timeout=30)
+
+    if result is None:
+        return (
+            "❌ ERROR: Could not retrieve status report\n\n"
+            "Drush command 'core:requirements' failed.\n\n"
+            "Possible causes:\n"
+            "1. Drush not configured properly\n"
+            "2. Database connection issue\n"
+            "3. Drupal site not bootstrapped correctly\n\n"
+            "Troubleshooting:\n"
+            "• Verify drush works: drush status\n"
+            "• Check database connection\n"
+            "• Use check_scout_health() to diagnose connectivity issues\n\n"
+            "Alternative: Visit /admin/reports/status in your browser"
+        )
+
+    if not isinstance(result, dict):
+        return (
+            "❌ ERROR: Unexpected response format from drush core:requirements\n\n"
+            "Expected a dictionary but got a different type.\n"
+            "This might indicate a drush version compatibility issue."
+        )
+
+    # Severity mapping
+    # Drupal uses: 2=Error, 1=Warning, 0=OK, -1=Info
+    severity_map = {"error": 2, "warning": 1, "ok": 0, "info": -1}
+
+    # Filter requirements by severity
+    filtered_requirements = {}
+
+    for key, requirement in result.items():
+        severity = requirement.get("severity")
+        severity_name = requirement.get("sid", severity)  # Some use 'sid' instead
+
+        # Convert severity to int if it's a string
+        if isinstance(severity_name, str):
+            try:
+                severity = int(severity_name)
+            except ValueError:
+                severity = 0
+        elif isinstance(severity, str):
+            try:
+                severity = int(severity)
+            except ValueError:
+                severity = 0
+        else:
+            # Use sid if available, otherwise severity
+            severity = severity_name if isinstance(severity_name, int) else severity
+
+        requirement["severity_int"] = severity
+
+        # Apply filters
+        if severity_filter:
+            filter_level = severity_map.get(severity_filter.lower())
+            if filter_level is not None and severity != filter_level:
+                continue
+
+        # Skip OK checks unless explicitly included
+        if not include_ok and severity == 0:
+            continue
+
+        filtered_requirements[key] = requirement
+
+    if not filtered_requirements:
+        if severity_filter:
+            return f"No status report items found with severity: {severity_filter}"
+        else:
+            return "✅ No errors or warnings found in status report. Site is healthy!"
+
+    # Categorize by severity
+    errors = {k: v for k, v in filtered_requirements.items() if v["severity_int"] == 2}
+    warnings = {k: v for k, v in filtered_requirements.items() if v["severity_int"] == 1}
+    info = {k: v for k, v in filtered_requirements.items() if v["severity_int"] == -1}
+    ok_checks = {k: v for k, v in filtered_requirements.items() if v["severity_int"] == 0}
+
+    # Summary
+    output.append("📊 SUMMARY\n")
+    output.append(f"   ❌ Errors: {len(errors)}")
+    output.append(f"   ⚠️  Warnings: {len(warnings)}")
+    output.append(f"   ℹ️  Info: {len(info)}")
+    if include_ok:
+        output.append(f"   ✅ OK: {len(ok_checks)}")
+    output.append("")
+
+    # Helper function to format requirement
+    def format_requirement(key, req):
+        lines = []
+        title = req.get("title", key)
+        value = req.get("value", "").strip()
+        description = req.get("description", "").strip()
+
+        lines.append(f"• {title}")
+        if value:
+            # Clean up value - remove excessive newlines
+            value_clean = " ".join(value.split())
+            lines.append(f"  Status: {value_clean}")
+        if description:
+            # Clean up description and wrap long lines
+            desc_clean = description.replace("\n\n", " | ")
+            desc_clean = " ".join(desc_clean.split())
+            # Wrap at 76 chars (accounting for 2 char indent)
+            if len(desc_clean) > 76:
+                words = desc_clean.split()
+                current_line = "  "
+                for word in words:
+                    if len(current_line + word) > 78:
+                        lines.append(current_line.rstrip())
+                        current_line = "  " + word + " "
+                    else:
+                        current_line += word + " "
+                if current_line.strip():
+                    lines.append(current_line.rstrip())
+            else:
+                lines.append(f"  {desc_clean}")
+        lines.append("")
+        return lines
+
+    # Display errors
+    if errors:
+        output.append("=" * 80)
+        output.append("❌ ERRORS (Critical Issues)")
+        output.append("=" * 80)
+        output.append("")
+        for key, req in errors.items():
+            output.extend(format_requirement(key, req))
+
+    # Display warnings
+    if warnings:
+        output.append("=" * 80)
+        output.append("⚠️  WARNINGS (Important Issues)")
+        output.append("=" * 80)
+        output.append("")
+        for key, req in warnings.items():
+            output.extend(format_requirement(key, req))
+
+    # Display info
+    if info and (include_ok or not severity_filter):
+        output.append("=" * 80)
+        output.append("ℹ️  INFORMATION")
+        output.append("=" * 80)
+        output.append("")
+        for key, req in info.items():
+            output.extend(format_requirement(key, req))
+
+    # Display OK checks if requested
+    if ok_checks and include_ok:
+        output.append("=" * 80)
+        output.append("✅ SUCCESSFUL CHECKS")
+        output.append("=" * 80)
+        output.append("")
+        for key, req in ok_checks.items():
+            output.extend(format_requirement(key, req))
+
+    # AI Assistant recommendations
+    output.append("=" * 80)
+    output.append("🤖 AI ASSISTANT - RECOMMENDED ACTIONS")
+    output.append("=" * 80)
+    output.append("")
+
+    if errors:
+        output.append("CRITICAL ERRORS - Address these immediately:")
+        output.append("")
+        for key, req in errors.items():
+            title = req.get("title", key)
+            output.append(f"• {title}")
+
+            # Provide specific guidance based on common error types
+            if "permission" in title.lower() or "writable" in req.get("value", "").lower():
+                output.append("  → Fix file permissions with: chmod or chown commands")
+                output.append("  → For settings.php: chmod 444 sites/default/settings.php")
+            elif "ai" in title.lower() and "provider" in title.lower():
+                output.append("  → Configure AI provider at /admin/config/ai/settings")
+                output.append("  → Or disable the AI module if not needed")
+            elif "database" in title.lower():
+                output.append("  → Check database connection in settings.php")
+                output.append("  → Verify database server is running")
+            elif "update" in title.lower() or "readiness" in title.lower():
+                output.append("  → Review automatic updates configuration")
+                output.append("  → May require manual intervention or module updates")
+
+        output.append("")
+
+    if warnings:
+        output.append("WARNINGS - Should be addressed soon:")
+        output.append("")
+        for key, req in warnings.items():
+            title = req.get("title", key)
+            output.append(f"• {title}")
+
+            # Provide specific guidance
+            if "settings.php" in req.get("description", "").lower():
+                output.append("  → Make settings.php read-only: chmod 444 sites/default/settings.php")
+            elif "trusted host" in title.lower():
+                output.append("  → Configure trusted_host_patterns in settings.php")
+            elif "cron" in title.lower():
+                output.append("  → Run cron: drush cron")
+                output.append("  → Configure automated cron or external cron job")
+
+        output.append("")
+
+    output.append("GENERAL TROUBLESHOOTING:")
+    output.append("1. Read the descriptions carefully - they often contain direct links to fix issues")
+    output.append("2. Use other Scout tools for deeper analysis:")
+    output.append("   • get_watchdog_logs() - Check recent errors")
+    output.append("   • get_available_updates() - Check for security updates")
+    output.append("   • list_modules() - Verify module installation")
+    output.append("3. Visit /admin/reports/status in browser for clickable links")
+    output.append("4. After fixing issues, clear caches: drush cache:rebuild")
+    output.append("")
+
+    output.append("=" * 80)
+    output.append("ℹ️  NOTE")
+    output.append("=" * 80)
+    output.append("")
+    output.append("This report is equivalent to /admin/reports/status page.")
+    output.append("Some issues may require manual configuration or code changes.")
+    output.append("Always test changes in a development environment first.")
     output.append("")
 
     return "\n".join(output)
