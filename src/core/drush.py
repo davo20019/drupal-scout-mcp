@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -38,7 +39,6 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
 
     # Ensure PATH includes common tool locations when running via MCP
     # MCP servers may have limited PATH, missing ddev/docker/lando/fin
-    import os
     env = os.environ.copy()
 
     # Add standard system paths if not already present
@@ -278,7 +278,6 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
 
         # Ensure PATH includes common tool locations when running via MCP
         # MCP servers may have limited PATH, missing ddev/docker/lando/fin
-        import os
         env = os.environ.copy()
 
         # Add standard system paths if not already present
