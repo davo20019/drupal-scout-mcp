@@ -664,7 +664,7 @@ def export_users_to_csv(
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Get all users via drush
-        logger.info(f"Fetching users...")
+        logger.info("Fetching users...")
         users = _get_all_users_from_drush(
             drupal_root=drupal_root,
             summary_only=summary_only,
