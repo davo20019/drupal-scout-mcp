@@ -168,6 +168,28 @@ ACCESS_CONTROL_PATTERNS = {
 
 
 # ============================================================================
+# CSRF PROTECTION PATTERNS
+# ============================================================================
+
+CSRF_PATTERNS = {
+    # Custom route POST handler without CSRF (outside Form API)
+    "custom_post_no_csrf": {
+        "pattern": r"Request::(create|createFromGlobals)|\\$request->request->get\(.*\$_POST",
+        "severity": "medium",
+        "description": "Custom POST handler detected - verify CSRF token validation is present",
+        "recommendation": "Use Form API (auto CSRF) or validate with \\Drupal::csrfToken()->validate()",
+    },
+    # State-changing operation that might be in GET
+    "potential_get_state_change": {
+        "pattern": r"(->save\(\)|->delete\(\)|->update\(\)|->create\(\))",
+        "severity": "low",
+        "description": "State-changing operation detected - verify route uses POST/DELETE with CSRF",
+        "recommendation": "Ensure operation is in POST route with Form API or CSRF token",
+    },
+}
+
+
+# ============================================================================
 # DEPRECATED/UNSAFE API PATTERNS
 # ============================================================================
 
@@ -345,7 +367,7 @@ def _init_php_parser():
         return None
 
     try:
-        PHP_LANGUAGE = Language(tree_sitter_php.language())
+        PHP_LANGUAGE = Language(tree_sitter_php.language_php())
         parser = Parser(PHP_LANGUAGE)
         return parser, PHP_LANGUAGE
     except Exception as e:
@@ -907,6 +929,105 @@ def scan_deprecated_api(module_name: str, module_path: Optional[str] = None, max
 
 
 @mcp.tool()
+def scan_csrf(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+    """
+    Scan a Drupal module for CSRF (Cross-Site Request Forgery) protection issues.
+
+    Drupal provides automatic CSRF protection through:
+    - Form API (automatic token generation and validation)
+    - Route requirements (_csrf_token: 'TRUE')
+    - \\Drupal::csrfToken()->validate() for custom handlers
+
+    This scan helps identify custom routes/handlers that may lack protection.
+
+    Detects:
+    - Custom POST handlers outside Form API
+    - State-changing operations (save/delete/update)
+    - Potential GET routes with state changes (CSRF risk)
+
+    Note: This is an advisory scan. Many findings are informational
+    - AI should investigate routing files to confirm CSRF handling.
+
+    Args:
+        module_name: Module machine name to scan
+        module_path: Optional explicit module path override
+        max_findings: Maximum findings to show (default: 50)
+
+    Returns:
+        Formatted report with findings and verification steps
+
+    Example:
+        scan_csrf("my_custom_module")
+    """
+    ensure_indexed()
+
+    module_dir = _find_module_path(module_name)
+    if not module_dir:
+        return f"❌ ERROR: Module '{module_name}' not found. Use list_modules() to see available modules."
+
+    output = []
+    output.append(f"🔍 CSRF PROTECTION SCAN: {module_name}")
+    output.append("=" * 80)
+    output.append("")
+
+    # Get PHP files
+    php_files = _get_php_files(module_dir)
+
+    if not php_files:
+        return f"No PHP files found in module '{module_name}'"
+
+    output.append(f"Scanning {len(php_files)} PHP files...")
+    output.append("")
+
+    # Scan for CSRF patterns
+    all_findings = []
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, CSRF_PATTERNS, "csrf")
+        all_findings.extend(findings)
+
+    # Format results with limit
+    output.append(_format_findings(all_findings, "CSRF Protection Review", max_findings))
+    output.append("")
+    output.append("─" * 80)
+    output.append("")
+
+    if all_findings:
+        output.append("📚 HOW TO VERIFY:")
+        output.append("")
+        output.append("1. Check routing files (*.routing.yml) for:")
+        output.append("   - Route method (GET vs POST/DELETE)")
+        output.append("   - _csrf_token: 'TRUE' requirement")
+        output.append("")
+        output.append("2. For Form API usage:")
+        output.append("   - Extends FormBase/ConfigFormBase = Auto CSRF ✅")
+        output.append("   - Uses #ajax = Auto CSRF ✅")
+        output.append("")
+        output.append("3. For custom handlers:")
+        output.append("   - Look for \\Drupal::csrfToken()->validate()")
+        output.append("   - Verify POST/DELETE methods used for state changes")
+        output.append("")
+        output.append("📚 RESOURCES:")
+        output.append("  • https://www.drupal.org/docs/security-in-drupal/csrf-protection")
+        output.append("  • https://www.drupal.org/docs/drupal-apis/form-api")
+        output.append("")
+        output.append("⚠️  NOTE: CSRF scan shows potential areas to review.")
+        output.append("   Use list_module_files() to check routing files (*.routing.yml)")
+        output.append("   Use read_module_file() to inspect route definitions")
+    else:
+        output.append("✅ No obvious CSRF protection gaps detected.")
+        output.append("")
+        output.append("⚠️  Note: This scan checks for patterns in PHP code.")
+        output.append("   AI should verify routing files (*.routing.yml) for complete CSRF analysis.")
+        output.append("")
+        output.append("Recommendations:")
+        output.append(f"  1. list_module_files('{module_name}', '*.routing.yml')")
+        output.append(f"  2. read_module_file('{module_name}', '<module>.routing.yml')")
+        output.append("  3. Check route methods and _csrf_token requirements")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
 def security_audit(
     module_name: str,
     module_path: Optional[str] = None,
@@ -921,6 +1042,7 @@ def security_audit(
     - XSS vulnerabilities
     - SQL injection vulnerabilities
     - Access control issues
+    - CSRF protection review
     - Deprecated/unsafe API usage
 
     Provides a prioritized report with severity-based recommendations.
@@ -991,6 +1113,11 @@ def security_audit(
         findings = _scan_file_for_patterns(php_file, DEPRECATED_API_PATTERNS, "deprecated_api")
         all_findings.extend(findings)
 
+    # CSRF protection scan
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, CSRF_PATTERNS, "csrf")
+        all_findings.extend(findings)
+
     # Apply severity filter if specified
     if severity_filter:
         all_findings = [f for f in all_findings if f.severity == severity_filter.lower()]
@@ -1000,6 +1127,7 @@ def security_audit(
     sql_findings = [f for f in all_findings if f.category == "sql_injection"]
     access_findings = [f for f in all_findings if f.category == "access_control"]
     deprecated_findings = [f for f in all_findings if f.category == "deprecated_api"]
+    csrf_findings = [f for f in all_findings if f.category == "csrf"]
 
     output.append("📊 SUMMARY")
     output.append("")
@@ -1007,6 +1135,7 @@ def security_audit(
     output.append(f"  • XSS: {len(xss_findings)}")
     output.append(f"  • SQL Injection: {len(sql_findings)}")
     output.append(f"  • Access Control: {len(access_findings)}")
+    output.append(f"  • CSRF Protection: {len(csrf_findings)}")
     output.append(f"  • Deprecated/Unsafe API: {len(deprecated_findings)}")
     output.append("")
 

@@ -350,6 +350,7 @@ Scans for:
 - XSS vulnerabilities (unescaped output, unsafe render arrays)
 - SQL injection (db_query concatenation, unsafe queries)
 - Access control issues (missing permission checks)
+- CSRF protection (custom POST handlers, state-changing operations)
 - Deprecated/unsafe API usage (eval, extract, Drupal 7 functions)
 
 Modes:
@@ -419,6 +420,28 @@ Detects:
 
 Parameters: max_findings (default: 50)
 Use case: Preparing modules for Drupal upgrades, security hardening
+```
+
+**scan_csrf** - Check CSRF (Cross-Site Request Forgery) protection
+```
+Example: "Check my_module for CSRF protection"
+Example: "Scan custom_api module for CSRF issues"
+
+Detects:
+- Custom POST handlers outside Form API (may need CSRF token)
+- State-changing operations (save/delete/update)
+- Potential GET routes with state changes (CSRF risk)
+
+How it works:
+- Scans PHP code for custom request handling
+- Guides AI to verify routing files (*.routing.yml)
+- Checks for Form API usage (auto CSRF protection)
+
+Note: Advisory scan - AI should investigate routing files to confirm CSRF handling
+Drupal Form API provides automatic CSRF protection
+
+Parameters: max_findings (default: 50)
+Use case: Custom route handlers, REST APIs, AJAX endpoints
 ```
 
 **Security Scanning Limitations & Best Practices**
