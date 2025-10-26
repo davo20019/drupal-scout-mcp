@@ -351,6 +351,9 @@ Scans for:
 - SQL injection (db_query concatenation, unsafe queries)
 - Access control issues (missing permission checks)
 - CSRF protection (custom POST handlers, state-changing operations)
+- Command injection (exec, shell_exec, system with variables)
+- Path traversal (file operations with user input, ../ patterns)
+- Hardcoded secrets (API keys, passwords, credentials)
 - Deprecated/unsafe API usage (eval, extract, Drupal 7 functions)
 
 Modes:
@@ -365,6 +368,43 @@ Parameters:
 
 Smart token management: Automatically handles large modules without hitting limits
 Pattern-based: All findings are concrete code patterns, no AI guessing
+```
+
+**scan_anonymous_exploits** - 🎯 CRITICAL: Identify remotely exploitable vulnerabilities
+```
+Example: "Scan my_api_module for anonymous exploits"
+Example: "Check chatbot for vulnerabilities accessible to anonymous users"
+Example: "What vulnerabilities in custom_api can be exploited remotely?"
+
+This is the HIGHEST PRIORITY security scan - identifies vulnerabilities that can
+be exploited remotely without authentication.
+
+How it works:
+1. Runs security scans (XSS, SQL injection, command injection, path traversal)
+2. Parses routing.yml files to identify anonymous-accessible routes
+3. Maps HIGH severity vulnerabilities to routes
+4. Reports ONLY vulnerabilities in anonymous routes
+
+Reports:
+- Routes accessible to anonymous users
+- Vulnerabilities that can be exploited remotely
+- Prioritized by exploitability (anonymous = critical)
+
+Why this matters:
+- Anonymous exploits = Remote exploitation without credentials
+- Highest priority for security fixes
+- Critical for public-facing modules (APIs, chatbots, forms)
+
+Parameters: max_findings (default: 50)
+
+Use cases:
+- Pre-deployment security validation
+- API security assessment
+- Public module vulnerability analysis
+- Penetration testing preparation
+
+Combines: Pattern-based vulnerability detection + Routing access analysis
+Output: Prioritized list of remotely exploitable security issues
 ```
 
 **scan_xss** - Detect Cross-Site Scripting vulnerabilities
@@ -444,6 +484,63 @@ Parameters: max_findings (default: 50)
 Use case: Custom route handlers, REST APIs, AJAX endpoints
 ```
 
+**scan_command_injection** - Detect command injection vulnerabilities
+```
+Example: "Scan my_module for command injection"
+Example: "Check system_integration for shell command issues"
+
+Detects:
+- exec(), shell_exec(), system(), passthru() with variables
+- Backtick shell execution operator with variables
+- Drush shell commands with user input
+- PHP mail() with user input (header injection)
+
+Parameters: max_findings (default: 50)
+Use case: Modules that execute shell commands, system integration modules
+```
+
+**scan_path_traversal** - Detect path traversal vulnerabilities
+```
+Example: "Scan my_module for path traversal issues"
+Example: "Check file_manager for path traversal vulnerabilities"
+
+Detects:
+- File includes with user input (include, require)
+- File read operations with unsanitized input
+- Directory traversal patterns (../ sequences)
+- Drupal file operations without validation
+- File deletion with user input
+
+Understands Drupal stream wrappers (public://, private://)
+
+Parameters: max_findings (default: 50)
+Use case: File management modules, import/export functionality
+```
+
+**scan_hardcoded_secrets** - Find hardcoded credentials and secrets
+```
+Example: "Scan my_module for hardcoded secrets"
+Example: "Check api_integration for hardcoded API keys"
+
+Detects:
+- API keys hardcoded in code
+- Passwords in variables
+- Database credentials
+- Private/secret keys
+- OAuth tokens
+- AWS credentials
+
+Excludes: Test files, examples, placeholders, comments
+
+Parameters: max_findings (default: 50)
+Use case: Pre-deployment security checks, code review, API integrations
+
+Best practices:
+- Use Drupal Key module for secret management
+- Store secrets in settings.php (excluded from version control)
+- Use environment variables
+```
+
 **Security Scanning Limitations & Best Practices**
 
 Scout's pattern-based security analysis is excellent for:
@@ -465,7 +562,7 @@ Pattern-based analysis may miss:
    - PHPStan (static analysis)
    - Psalm (type checking & security)
    - Semgrep (custom security rules)
-4. Manual penetration testing for CSRF, command injection, path traversal
+4. Manual penetration testing for runtime validation
 5. Professional security audit for production/compliance requirements
 
 Scout should NOT be the sole tool for:

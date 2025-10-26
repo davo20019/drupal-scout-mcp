@@ -5,7 +5,12 @@ Provides pattern-based security scanning for Drupal modules:
 - scan_xss: Detect Cross-Site Scripting (XSS) vulnerabilities
 - scan_sql_injection: Detect SQL injection vulnerabilities
 - scan_access_control: Find missing permission checks
+- scan_csrf: Review CSRF protection in custom handlers
+- scan_command_injection: Detect command injection vulnerabilities
+- scan_path_traversal: Detect path traversal vulnerabilities
+- scan_hardcoded_secrets: Find hardcoded credentials and API keys
 - scan_deprecated_api: Identify unsafe/deprecated API usage
+- scan_anonymous_exploits: Identify remotely exploitable vulnerabilities (HIGH PRIORITY)
 - security_audit: Run all security scans with prioritized report
 
 These tools use deterministic pattern matching - no AI guessing.
@@ -190,6 +195,135 @@ CSRF_PATTERNS = {
 
 
 # ============================================================================
+# COMMAND INJECTION PATTERNS
+# ============================================================================
+
+COMMAND_INJECTION_PATTERNS = {
+    # exec/shell_exec/system/passthru with variables
+    "exec_with_variable": {
+        "pattern": r"\b(exec|shell_exec|system|passthru|proc_open|popen)\s*\([^)]*\$",
+        "severity": "high",
+        "description": "Command execution function with variable (potential command injection)",
+        "recommendation": "Avoid shell commands. Use PHP functions or escapeshellarg()/escapeshellcmd()",
+    },
+    # Backtick operator (shell execution)
+    "backtick_operator": {
+        "pattern": r"`[^`]*\$[^`]*`",
+        "severity": "high",
+        "description": "Backtick shell execution with variable (command injection risk)",
+        "recommendation": "Avoid backtick operator. Use PHP functions instead",
+    },
+    # Drush shell execution
+    "drush_shell_exec": {
+        "pattern": r"drush_shell_exec\([^)]*\$",
+        "severity": "high",
+        "description": "Drush shell execution with variable",
+        "recommendation": "Use Drush API directly instead of shell commands",
+    },
+    # PHP mail() with user input (can inject shell commands)
+    "mail_injection": {
+        "pattern": r"\bmail\s*\([^)]*\$_(GET|POST|REQUEST)",
+        "severity": "medium",
+        "description": "mail() with user input (potential header/command injection)",
+        "recommendation": "Use Drupal's mail system and sanitize inputs",
+    },
+}
+
+
+# ============================================================================
+# PATH TRAVERSAL PATTERNS
+# ============================================================================
+
+PATH_TRAVERSAL_PATTERNS = {
+    # File operations with user input
+    "file_include_variable": {
+        "pattern": r"\b(include|require|include_once|require_once)\s*\([^)]*\$_(GET|POST|REQUEST|COOKIE)",
+        "severity": "high",
+        "description": "File include with user input (path traversal/RCE risk)",
+        "recommendation": "Never include files based on user input. Use whitelist approach",
+    },
+    # File read operations with variables
+    "file_read_variable": {
+        "pattern": r"\b(file_get_contents|fopen|readfile|file)\s*\([^)]*\$_(GET|POST|REQUEST)",
+        "severity": "high",
+        "description": "File read operation with user input (path traversal risk)",
+        "recommendation": "Validate with realpath(), check against allowed directories",
+    },
+    # Directory traversal pattern in string
+    "dotdot_slash": {
+        "pattern": r"\$[^=]*\.\.[\\/]",
+        "severity": "medium",
+        "description": "Potential path traversal sequence (../) in variable",
+        "recommendation": "Use realpath() or drupal_realpath() to canonicalize paths",
+    },
+    # Drupal file operations without validation
+    "drupal_file_ops_no_validation": {
+        "pattern": r"file_save_data\([^)]*\$_(GET|POST)|->createFile\([^)]*\$_(GET|POST)",
+        "severity": "medium",
+        "description": "File operation with user input without visible validation",
+        "recommendation": "Validate filename, use file_munge_filename(), check directory permissions",
+    },
+    # Unlink/delete with user input
+    "file_delete_user_input": {
+        "pattern": r"\b(unlink|file_unmanaged_delete)\s*\([^)]*\$_(GET|POST|REQUEST)",
+        "severity": "high",
+        "description": "File deletion with user input (path traversal risk)",
+        "recommendation": "Validate against allowed directories, use realpath()",
+    },
+}
+
+
+# ============================================================================
+# HARDCODED SECRETS PATTERNS
+# ============================================================================
+
+HARDCODED_SECRETS_PATTERNS = {
+    # API keys
+    "api_key_hardcoded": {
+        "pattern": r"['\"]?api[_-]?key['\"]?\s*[=:]\s*['\"][a-zA-Z0-9_\-]{16,}['\"]",
+        "severity": "high",
+        "description": "Hardcoded API key detected",
+        "recommendation": "Use settings.php, environment variables, or Key module",
+    },
+    # Password in code
+    "password_hardcoded": {
+        "pattern": r"['\"]?password['\"]?\s*[=:]\s*['\"][^'\"]{8,}['\"]",
+        "severity": "high",
+        "description": "Hardcoded password detected",
+        "recommendation": "Never hardcode passwords. Use configuration or Key module",
+    },
+    # Database credentials
+    "db_credentials": {
+        "pattern": r"['\"](mysql|mysqli|pdo):.*password[=:][^;'\"]+",
+        "severity": "high",
+        "description": "Database credentials in code",
+        "recommendation": "Use settings.php for database configuration",
+    },
+    # Private keys
+    "private_key_hardcoded": {
+        "pattern": r"['\"]?(private|secret)[_-]?key['\"]?\s*[=:]\s*['\"][a-zA-Z0-9+/=]{20,}['\"]",
+        "severity": "high",
+        "description": "Hardcoded private/secret key detected",
+        "recommendation": "Use Key module or settings.php",
+    },
+    # OAuth tokens
+    "oauth_token_hardcoded": {
+        "pattern": r"['\"]?(access|bearer|oauth)[_-]?token['\"]?\s*[=:]\s*['\"][a-zA-Z0-9_\-\.]{20,}['\"]",
+        "severity": "high",
+        "description": "Hardcoded OAuth/access token detected",
+        "recommendation": "Use secure credential storage (Key module, settings.php)",
+    },
+    # AWS keys
+    "aws_key_pattern": {
+        "pattern": r"(AKIA[0-9A-Z]{16}|aws[_-]?secret|aws[_-]?access)",
+        "severity": "high",
+        "description": "AWS credentials pattern detected",
+        "recommendation": "Use IAM roles or AWS credentials file, not hardcoded keys",
+    },
+}
+
+
+# ============================================================================
 # DEPRECATED/UNSAFE API PATTERNS
 # ============================================================================
 
@@ -308,6 +442,39 @@ def _is_false_positive(line: str, pattern_name: str, category: str) -> bool:
                 for keyword in ["config->save(", "cache->delete(", "state->delete("]
             ):
                 return True
+
+    # Command injection false positives
+    if category == "command_injection":
+        # escapeshellarg or escapeshellcmd present means it's likely handled
+        if "escapeshellarg" in line_lower or "escapeshellcmd" in line_lower:
+            return True
+        # Drush commands with hardcoded strings (no variables) are safe
+        if pattern_name == "drush_shell_exec" and "$" not in line:
+            return True
+
+    # Path traversal false positives
+    if category == "path_traversal":
+        # realpath() or drupal_realpath() present means validation is happening
+        if "realpath(" in line_lower or "drupal_realpath(" in line_lower:
+            return True
+        # file_create_url is safe (generates URLs, not file access)
+        if "file_create_url" in line_lower:
+            return True
+        # Stream wrappers are generally safe (public://, private://)
+        if "public://" in line or "private://" in line or "temporary://" in line:
+            return True
+
+    # Hardcoded secrets false positives
+    if category == "hardcoded_secrets":
+        # Example values, placeholders, or comments
+        if any(word in line_lower for word in ["example", "placeholder", "your_api_key", "your_password", "xxx"]):
+            return True
+        # Test files
+        if "/test" in line_lower or "test.php" in line_lower or "phpunit" in line_lower:
+            return True
+        # Documentation/comments
+        if line.strip().startswith(("//", "#", "*", "/*")):
+            return True
 
     # XSS false positives
     if category == "xss":
@@ -1028,6 +1195,234 @@ def scan_csrf(module_name: str, module_path: Optional[str] = None, max_findings:
 
 
 @mcp.tool()
+def scan_command_injection(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+    """
+    Scan a Drupal module for command injection vulnerabilities.
+
+    Uses pattern-based detection to find:
+    - exec(), shell_exec(), system(), passthru() with variables
+    - Backtick shell execution operator
+    - Drush shell commands with variables
+    - PHP mail() with user input (header injection)
+
+    Analysis method: Pattern matching + Drupal-aware filtering
+    Detects dangerous shell command execution patterns
+
+    This tool does NOT use AI - all findings are concrete code patterns.
+
+    Args:
+        module_name: Module machine name to scan
+        module_path: Optional explicit module path override
+        max_findings: Maximum findings to show (default: 50)
+
+    Returns:
+        Formatted report with findings and remediation steps
+
+    Example:
+        scan_command_injection("my_custom_module")
+    """
+    ensure_indexed()
+
+    module_dir = _find_module_path(module_name)
+    if not module_dir:
+        return f"❌ ERROR: Module '{module_name}' not found. Use list_modules() to see available modules."
+
+    output = []
+    output.append(f"🔍 COMMAND INJECTION SCAN: {module_name}")
+    output.append("=" * 80)
+    output.append("")
+
+    # Get PHP files
+    php_files = _get_php_files(module_dir)
+
+    if not php_files:
+        return f"No PHP files found in module '{module_name}'"
+
+    output.append(f"Scanning {len(php_files)} PHP files...")
+    output.append("")
+
+    # Scan for command injection patterns
+    all_findings = []
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        all_findings.extend(findings)
+
+    # Format results
+    output.append(_format_findings(all_findings, "Command Injection Vulnerabilities", max_findings))
+    output.append("")
+    output.append("─" * 80)
+    output.append("")
+
+    if all_findings:
+        output.append("📚 RESOURCES:")
+        output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
+        output.append("  • https://owasp.org/www-community/attacks/Command_Injection")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: May miss indirect command execution and complex flow.")
+        output.append("   For production audits, use manual review + static analysis tools.")
+    else:
+        output.append("✅ No command injection vulnerabilities detected using common patterns.")
+        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def scan_path_traversal(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+    """
+    Scan a Drupal module for path traversal vulnerabilities.
+
+    Uses pattern-based detection to find:
+    - File includes with user input (include, require)
+    - File read operations with user input (file_get_contents, fopen)
+    - Directory traversal patterns (../)
+    - Drupal file operations without validation
+    - File deletion with user input
+
+    Analysis method: Pattern matching + Drupal-aware filtering
+    Understands Drupal stream wrappers (public://, private://)
+
+    This tool does NOT use AI - all findings are concrete code patterns.
+
+    Args:
+        module_name: Module machine name to scan
+        module_path: Optional explicit module path override
+        max_findings: Maximum findings to show (default: 50)
+
+    Returns:
+        Formatted report with findings and remediation steps
+
+    Example:
+        scan_path_traversal("my_custom_module")
+    """
+    ensure_indexed()
+
+    module_dir = _find_module_path(module_name)
+    if not module_dir:
+        return f"❌ ERROR: Module '{module_name}' not found. Use list_modules() to see available modules."
+
+    output = []
+    output.append(f"🔍 PATH TRAVERSAL SCAN: {module_name}")
+    output.append("=" * 80)
+    output.append("")
+
+    # Get PHP files
+    php_files = _get_php_files(module_dir)
+
+    if not php_files:
+        return f"No PHP files found in module '{module_name}'"
+
+    output.append(f"Scanning {len(php_files)} PHP files...")
+    output.append("")
+
+    # Scan for path traversal patterns
+    all_findings = []
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, PATH_TRAVERSAL_PATTERNS, "path_traversal")
+        all_findings.extend(findings)
+
+    # Format results
+    output.append(_format_findings(all_findings, "Path Traversal Vulnerabilities", max_findings))
+    output.append("")
+    output.append("─" * 80)
+    output.append("")
+
+    if all_findings:
+        output.append("📚 RESOURCES:")
+        output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
+        output.append("  • https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/01-Testing_Directory_Traversal_File_Include")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: May miss complex path manipulation and validation.")
+        output.append("   For production audits, use manual review + penetration testing.")
+    else:
+        output.append("✅ No path traversal vulnerabilities detected using common patterns.")
+        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def scan_hardcoded_secrets(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+    """
+    Scan a Drupal module for hardcoded secrets and credentials.
+
+    Uses pattern-based detection to find:
+    - API keys hardcoded in code
+    - Passwords in variables
+    - Database credentials
+    - Private/secret keys
+    - OAuth tokens
+    - AWS credentials
+
+    Analysis method: Pattern matching + False positive filtering
+    Excludes test files, examples, placeholders, and comments
+
+    This tool does NOT use AI - all findings are concrete code patterns.
+
+    Args:
+        module_name: Module machine name to scan
+        module_path: Optional explicit module path override
+        max_findings: Maximum findings to show (default: 50)
+
+    Returns:
+        Formatted report with findings and remediation steps
+
+    Example:
+        scan_hardcoded_secrets("my_custom_module")
+    """
+    ensure_indexed()
+
+    module_dir = _find_module_path(module_name)
+    if not module_dir:
+        return f"❌ ERROR: Module '{module_name}' not found. Use list_modules() to see available modules."
+
+    output = []
+    output.append(f"🔍 HARDCODED SECRETS SCAN: {module_name}")
+    output.append("=" * 80)
+    output.append("")
+
+    # Get PHP files
+    php_files = _get_php_files(module_dir)
+
+    if not php_files:
+        return f"No PHP files found in module '{module_name}'"
+
+    output.append(f"Scanning {len(php_files)} PHP files...")
+    output.append("")
+
+    # Scan for hardcoded secrets
+    all_findings = []
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets")
+        all_findings.extend(findings)
+
+    # Format results
+    output.append(_format_findings(all_findings, "Hardcoded Secrets", max_findings))
+    output.append("")
+    output.append("─" * 80)
+    output.append("")
+
+    if all_findings:
+        output.append("📚 BEST PRACTICES:")
+        output.append("  • Use Drupal Key module: https://www.drupal.org/project/key")
+        output.append("  • Store secrets in settings.php (excluded from version control)")
+        output.append("  • Use environment variables")
+        output.append("  • Never commit secrets to git")
+        output.append("")
+        output.append("📚 RESOURCES:")
+        output.append("  • https://www.drupal.org/docs/security-in-drupal/managing-sensitive-data")
+        output.append("  • https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: Pattern-based detection may have false positives.")
+        output.append("   May flag example values in documentation. Review each finding.")
+    else:
+        output.append("✅ No hardcoded secrets detected using common patterns.")
+        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
 def security_audit(
     module_name: str,
     module_path: Optional[str] = None,
@@ -1043,6 +1438,9 @@ def security_audit(
     - SQL injection vulnerabilities
     - Access control issues
     - CSRF protection review
+    - Command injection vulnerabilities
+    - Path traversal vulnerabilities
+    - Hardcoded secrets
     - Deprecated/unsafe API usage
 
     Provides a prioritized report with severity-based recommendations.
@@ -1118,6 +1516,21 @@ def security_audit(
         findings = _scan_file_for_patterns(php_file, CSRF_PATTERNS, "csrf")
         all_findings.extend(findings)
 
+    # Command injection scan
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        all_findings.extend(findings)
+
+    # Path traversal scan
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, PATH_TRAVERSAL_PATTERNS, "path_traversal")
+        all_findings.extend(findings)
+
+    # Hardcoded secrets scan
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets")
+        all_findings.extend(findings)
+
     # Apply severity filter if specified
     if severity_filter:
         all_findings = [f for f in all_findings if f.severity == severity_filter.lower()]
@@ -1128,6 +1541,9 @@ def security_audit(
     access_findings = [f for f in all_findings if f.category == "access_control"]
     deprecated_findings = [f for f in all_findings if f.category == "deprecated_api"]
     csrf_findings = [f for f in all_findings if f.category == "csrf"]
+    cmd_injection_findings = [f for f in all_findings if f.category == "command_injection"]
+    path_traversal_findings = [f for f in all_findings if f.category == "path_traversal"]
+    secrets_findings = [f for f in all_findings if f.category == "hardcoded_secrets"]
 
     output.append("📊 SUMMARY")
     output.append("")
@@ -1136,6 +1552,9 @@ def security_audit(
     output.append(f"  • SQL Injection: {len(sql_findings)}")
     output.append(f"  • Access Control: {len(access_findings)}")
     output.append(f"  • CSRF Protection: {len(csrf_findings)}")
+    output.append(f"  • Command Injection: {len(cmd_injection_findings)}")
+    output.append(f"  • Path Traversal: {len(path_traversal_findings)}")
+    output.append(f"  • Hardcoded Secrets: {len(secrets_findings)}")
     output.append(f"  • Deprecated/Unsafe API: {len(deprecated_findings)}")
     output.append("")
 
@@ -1288,5 +1707,308 @@ def security_audit(
     output.append("Resources:")
     output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
     output.append("  • https://www.drupal.org/security-team")
+
+    return "\n".join(output)
+
+
+# ============================================================================
+# ANONYMOUS EXPLOIT ANALYSIS
+# ============================================================================
+
+
+def _parse_routing_file(routing_file: Path) -> Dict[str, Dict]:
+    """
+    Parse a Drupal routing.yml file to extract route definitions.
+
+    Returns:
+        Dict mapping route names to their access requirements
+    """
+    import yaml
+
+    try:
+        with open(routing_file, 'r') as f:
+            routes = yaml.safe_load(f) or {}
+
+        route_info = {}
+        for route_name, route_config in routes.items():
+            if not isinstance(route_config, dict):
+                continue
+
+            # Extract access requirements
+            requirements = route_config.get('requirements', {})
+
+            # Determine if anonymous users can access
+            is_anonymous_accessible = True
+            access_level = "PUBLIC"
+
+            if '_permission' in requirements:
+                permission = requirements['_permission']
+                # Check if it's a restrictive permission
+                if permission and permission not in ['access content']:
+                    is_anonymous_accessible = False
+                    access_level = f"REQUIRES: {permission}"
+
+            if '_role' in requirements:
+                role = requirements['_role']
+                if 'anonymous' not in role.lower():
+                    is_anonymous_accessible = False
+                    access_level = f"REQUIRES ROLE: {role}"
+
+            if '_access' in requirements:
+                if requirements['_access'] != 'TRUE':
+                    is_anonymous_accessible = False
+                    access_level = f"CUSTOM ACCESS: {requirements['_access']}"
+
+            # Extract controller/form info
+            defaults = route_config.get('defaults', {})
+            controller = defaults.get('_controller', defaults.get('_form', defaults.get('_entity_form', 'unknown')))
+
+            route_info[route_name] = {
+                'anonymous_accessible': is_anonymous_accessible,
+                'access_level': access_level,
+                'controller': controller,
+                'path': route_config.get('path', ''),
+                'methods': route_config.get('methods', ['GET']),
+            }
+
+        return route_info
+
+    except Exception as e:
+        logger.error(f"Error parsing routing file {routing_file}: {e}")
+        return {}
+
+
+def _map_findings_to_routes(module_dir: Path, findings: List[SecurityFinding]) -> Dict[str, List[SecurityFinding]]:
+    """
+    Map security findings to their routes by matching controller/form classes.
+
+    Returns:
+        Dict mapping route names to list of findings in that route
+    """
+    # Find all routing files
+    routing_files = list(module_dir.rglob("*.routing.yml"))
+
+    # Parse all routes
+    all_routes = {}
+    for routing_file in routing_files:
+        routes = _parse_routing_file(routing_file)
+        all_routes.update(routes)
+
+    # Map findings to routes
+    route_findings = {}
+
+    for finding in findings:
+        # Extract class/controller name from file path
+        # e.g., src/Controller/DeepChatApi.php -> DeepChatApi
+        file_path = Path(finding.file)
+
+        # Try to match with route controllers
+        for route_name, route_info in all_routes.items():
+            controller = route_info['controller']
+
+            # Check if finding file matches controller
+            if file_path.stem in controller or controller.split('::')[0].endswith(file_path.stem):
+                if route_name not in route_findings:
+                    route_findings[route_name] = {
+                        'route_info': route_info,
+                        'findings': []
+                    }
+                route_findings[route_name]['findings'].append(finding)
+
+    return route_findings
+
+
+@mcp.tool()
+def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+    """
+    Identify security vulnerabilities that are exploitable by anonymous (unauthenticated) users.
+
+    This tool combines security scanning with routing analysis to determine which
+    vulnerabilities can be exploited remotely without authentication.
+
+    Workflow:
+    1. Runs security scans (XSS, SQL injection, command injection, path traversal)
+    2. Parses routing.yml files to identify anonymous-accessible routes
+    3. Maps vulnerabilities to routes
+    4. Reports only vulnerabilities accessible to anonymous users
+
+    This is critical for prioritizing security fixes - anonymous exploits are the
+    highest priority as they can be exploited remotely without credentials.
+
+    Args:
+        module_name: Module machine name to scan
+        module_path: Optional explicit module path override
+        max_findings: Maximum findings to show (default: 50)
+
+    Returns:
+        Formatted report with anonymously exploitable vulnerabilities prioritized
+
+    Examples:
+        scan_anonymous_exploits("my_api_module")
+        scan_anonymous_exploits("chatbot", max_findings=20)
+
+    Use case:
+        - Pre-deployment security checks
+        - Identifying critical remote vulnerabilities
+        - Prioritizing security fixes
+        - Penetration testing preparation
+    """
+    ensure_indexed()
+
+    module_dir = _find_module_path(module_name)
+    if not module_dir:
+        return f"❌ ERROR: Module '{module_name}' not found. Use list_modules() to see available modules."
+
+    output = []
+    output.append(f"🎯 ANONYMOUS EXPLOIT SCAN: {module_name}")
+    output.append("=" * 80)
+    output.append("")
+    output.append("Analyzing vulnerabilities exploitable by ANONYMOUS users...")
+    output.append("(Remote exploitation without authentication)")
+    output.append("")
+
+    # Get PHP files
+    php_files = _get_php_files(module_dir)
+
+    if not php_files:
+        return f"No PHP files found in module '{module_name}'"
+
+    # Run security scans for exploitable vulnerability types
+    all_findings = []
+
+    # XSS - anonymously exploitable if in public routes
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, XSS_PATTERNS, "xss")
+        all_findings.extend(findings)
+
+    # SQL injection - anonymously exploitable
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, SQL_INJECTION_PATTERNS, "sql_injection")
+        all_findings.extend(findings)
+
+    # Command injection - anonymously exploitable
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        all_findings.extend(findings)
+
+    # Path traversal - anonymously exploitable
+    for php_file in php_files:
+        findings = _scan_file_for_patterns(php_file, PATH_TRAVERSAL_PATTERNS, "path_traversal")
+        all_findings.extend(findings)
+
+    # Filter to HIGH severity only (most critical for anonymous exploits)
+    high_findings = [f for f in all_findings if f.severity == "high"]
+
+    output.append(f"📊 Found {len(high_findings)} HIGH severity vulnerabilities")
+    output.append("")
+    output.append("─" * 80)
+    output.append("")
+
+    # Parse routing files
+    routing_files = list(module_dir.rglob("*.routing.yml"))
+
+    if not routing_files:
+        output.append("⚠️  WARNING: No routing files found!")
+        output.append("   Cannot determine anonymous accessibility without routing definitions.")
+        output.append("")
+        output.append("Showing all HIGH severity findings (manual route review needed):")
+        output.append("")
+        output.append(_format_findings(high_findings, "HIGH Severity Vulnerabilities", max_findings))
+        return "\n".join(output)
+
+    # Parse all routes
+    output.append(f"📁 Analyzing {len(routing_files)} routing file(s)...")
+    output.append("")
+
+    all_routes = {}
+    for routing_file in routing_files:
+        routes = _parse_routing_file(routing_file)
+        all_routes.update(routes)
+
+    # Categorize routes
+    anonymous_routes = {k: v for k, v in all_routes.items() if v['anonymous_accessible']}
+    protected_routes = {k: v for k, v in all_routes.items() if not v['anonymous_accessible']}
+
+    output.append(f"   • {len(anonymous_routes)} routes accessible to ANONYMOUS users")
+    output.append(f"   • {len(protected_routes)} routes require authentication")
+    output.append("")
+
+    if not anonymous_routes:
+        output.append("✅ GOOD NEWS: No routes are accessible to anonymous users!")
+        output.append("   All vulnerabilities require authentication to exploit.")
+        output.append("")
+        output.append(f"However, {len(high_findings)} HIGH severity issues still need fixing:")
+        output.append(_format_findings(high_findings, "Authenticated Vulnerabilities", max_findings))
+        return "\n".join(output)
+
+    # Map findings to routes
+    route_findings_map = _map_findings_to_routes(module_dir, high_findings)
+
+    # Identify anonymously exploitable findings
+    anonymous_exploits = []
+
+    for route_name, data in route_findings_map.items():
+        if data['route_info']['anonymous_accessible']:
+            for finding in data['findings']:
+                anonymous_exploits.append({
+                    'route': route_name,
+                    'route_info': data['route_info'],
+                    'finding': finding
+                })
+
+    output.append("─" * 80)
+    output.append("")
+
+    if not anonymous_exploits:
+        output.append("✅ GOOD NEWS: No HIGH severity vulnerabilities in anonymous routes!")
+        output.append("")
+        output.append(f"Note: Module has {len(anonymous_routes)} anonymous routes, but no mapped HIGH severity issues.")
+        output.append("")
+        output.append("⚠️  However, this does NOT guarantee safety:")
+        output.append("   • Vulnerabilities may exist in code called by controllers")
+        output.append("   • Manual code review still recommended for anonymous routes")
+        output.append("")
+        output.append("Anonymous accessible routes to review:")
+        for route_name, route_info in list(anonymous_routes.items())[:10]:
+            output.append(f"   • {route_name}")
+            output.append(f"     Path: {route_info['path']}")
+            output.append(f"     Controller: {route_info['controller']}")
+            output.append("")
+    else:
+        output.append(f"🚨 CRITICAL: {len(anonymous_exploits)} ANONYMOUSLY EXPLOITABLE VULNERABILITIES!")
+        output.append("")
+        output.append("These can be exploited REMOTELY without authentication:")
+        output.append("")
+
+        shown = 0
+        for exploit in anonymous_exploits[:max_findings]:
+            finding = exploit['finding']
+            route_info = exploit['route_info']
+
+            output.append(f"❌ {exploit['route']}")
+            output.append(f"   Route: {route_info['path']} ({', '.join(route_info['methods'])})")
+            output.append(f"   Access: {route_info['access_level']}")
+            output.append(f"   Vulnerability: {finding.category.upper()} - {finding.description}")
+            output.append(f"   File: {Path(finding.file).name}:{finding.line}")
+            output.append(f"   Code: {finding.code[:80]}{'...' if len(finding.code) > 80 else ''}")
+            output.append(f"   Fix: {finding.recommendation}")
+            output.append("")
+            shown += 1
+
+        if len(anonymous_exploits) > max_findings:
+            output.append(f"... {len(anonymous_exploits) - max_findings} more anonymous exploits not shown")
+            output.append("")
+
+        output.append("─" * 80)
+        output.append("")
+        output.append("🚨 IMMEDIATE ACTION REQUIRED:")
+        output.append("  1. These vulnerabilities are REMOTELY EXPLOITABLE")
+        output.append("  2. Fix HIGH severity issues in anonymous routes FIRST")
+        output.append("  3. Consider temporarily disabling anonymous access")
+        output.append("  4. Review all anonymous routes for additional issues")
+        output.append("")
+        output.append("📚 RESOURCES:")
+        output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
+        output.append("  • https://www.drupal.org/docs/drupal-apis/routing-system")
 
     return "\n".join(output)
