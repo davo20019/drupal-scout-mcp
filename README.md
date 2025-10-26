@@ -543,8 +543,8 @@ Best practices:
 
 **verify_vulnerability** - 🎓 Explain how to manually verify security vulnerabilities
 ```
-Example: "How do I verify the XSS in ai_chatbot DeepChatApi.php line 45?"
-Example: "Show me how to test the SQL injection in my_module"
+Example: "How do I verify the XSS vulnerability found in MyController.php?"
+Example: "Show me how to test the SQL injection in my_custom_module"
 Example: "Explain how to verify this command injection vulnerability"
 
 INFORMATIONAL TOOL - Does NOT automatically execute exploits.
