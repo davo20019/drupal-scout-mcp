@@ -14,8 +14,8 @@ from server import mcp
 logger = logging.getLogger(__name__)
 
 
-# Import shared components
-from src.tools.security.patterns import (
+# Import shared components  # noqa: E402
+from src.tools.security.patterns import (  # noqa: E402
     XSS_PATTERNS,
     SQL_INJECTION_PATTERNS,
     ACCESS_CONTROL_PATTERNS,
@@ -25,13 +25,12 @@ from src.tools.security.patterns import (
     HARDCODED_SECRETS_PATTERNS,
     DEPRECATED_API_PATTERNS,
 )
-from src.tools.security.filters import _is_false_positive
-from src.tools.security.ast_analysis import (
+from src.tools.security.ast_analysis import (  # noqa: E402
     _get_php_files,
     _scan_file_for_patterns,
 )
-from src.tools.security.models import SecurityFinding
-from src.tools.code_analysis import _find_module_path
+from src.tools.security.models import SecurityFinding  # noqa: E402
+from src.tools.code_analysis import _find_module_path  # noqa: E402
 
 
 @mcp.tool()

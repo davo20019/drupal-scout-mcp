@@ -5,7 +5,6 @@ Part of Drupal Scout MCP security scanning suite.
 """
 
 import logging
-from pathlib import Path
 from typing import Optional
 
 from src.core.config import ensure_indexed
@@ -14,15 +13,14 @@ from server import mcp
 logger = logging.getLogger(__name__)
 
 
-# Import shared components
-from src.tools.security.patterns import DEPRECATED_API_PATTERNS
-from src.tools.security.filters import _is_false_positive
-from src.tools.security.ast_analysis import (
+# Import shared components  # noqa: E402
+from src.tools.security.patterns import DEPRECATED_API_PATTERNS  # noqa: E402
+from src.tools.security.ast_analysis import (  # noqa: E402
     _get_php_files,
     _scan_file_for_patterns,
     _format_findings,
 )
-from src.tools.code_analysis import _find_module_path
+from src.tools.code_analysis import _find_module_path  # noqa: E402
 
 
 @mcp.tool()
