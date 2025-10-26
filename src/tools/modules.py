@@ -338,10 +338,33 @@ def _analyze_single_module(module_name: str, dep_graph: dict) -> str:
     reverse = dep_graph["reverse"]
     modules = dep_graph["modules"]
 
-    # Check if module exists
-    if module_name not in modules:
-        return f"❌ Module '{module_name}' not found in indexed modules\n\n💡 Try: list_modules() or reindex_modules()"
+    # Check if module exists (case-insensitive search)
+    module_name_lower = module_name.lower()
+    actual_module_name = None
 
+    # Try exact match first
+    if module_name in modules:
+        actual_module_name = module_name
+    else:
+        # Try case-insensitive match
+        for mod_key in modules.keys():
+            if mod_key.lower() == module_name_lower:
+                actual_module_name = mod_key
+                break
+
+    if not actual_module_name:
+        # Module not found - provide helpful error with suggestions
+        similar = [m for m in modules.keys() if module_name_lower in m.lower()][:5]
+        error_msg = f"❌ Module '{module_name}' not found in indexed modules\n\n"
+        if similar:
+            error_msg += "💡 Did you mean one of these?\n"
+            for sim in similar:
+                error_msg += f"   - {sim}\n"
+            error_msg += "\n"
+        error_msg += "💡 Try: list_modules() or reindex_modules()"
+        return error_msg
+
+    module_name = actual_module_name
     module = modules[module_name]
     output = [f"📦 **Dependency Analysis: {module.get('name', module_name)}** (`{module_name}`)\n"]
 
