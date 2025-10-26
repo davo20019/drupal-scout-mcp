@@ -50,9 +50,27 @@ When Scout runs via MCP (in Cursor/Claude Desktop), it runs in a different envir
 
 ---
 
-## Solution 1: Configure drush_command (Recommended)
+## Solution 1: Open Cursor from Your Drupal Project Directory (Recommended)
 
-Tell Scout exactly how to run drush by adding `drush_command` to your config.json:
+**Most Common Fix:** Open Cursor/your IDE from the Drupal project directory where `.ddev/` (or `.lando.yml`) exists.
+
+```bash
+cd /path/to/your/drupal
+cursor .
+```
+
+**Why this works:**
+- When you open Cursor from the project directory, it inherits your terminal's PATH environment
+- This gives the MCP server access to `ddev`, `docker`, `lando`, etc.
+- Scout can then execute `ddev drush` commands successfully
+
+**Important:** Just having `"drush_command": "ddev drush"` in config isn't enough if Cursor can't find `ddev` in its PATH. Opening from the project directory ensures `ddev` is available.
+
+---
+
+## Solution 2: Configure drush_command with Absolute Paths
+
+If you can't open Cursor from the project directory, tell Scout exactly how to run drush using absolute paths:
 
 ### For DDEV users:
 ```json
@@ -93,7 +111,7 @@ Tell Scout exactly how to run drush by adding `drush_command` to your config.jso
 
 ---
 
-## Solution 2: Ensure Dev Environment is Running
+## Solution 3: Ensure Dev Environment is Running
 
 Scout auto-detects DDEV/Lando/Docksal, but your dev environment must be running:
 
@@ -135,7 +153,7 @@ fin drush status
 
 ---
 
-## Solution 3: Verify Drupal Root Path
+## Solution 4: Verify Drupal Root Path
 
 Scout needs the correct path to your Drupal installation:
 

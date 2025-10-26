@@ -140,11 +140,15 @@ def export_taxonomy_usage_to_csv(
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
                     "ai_fix_instructions": {
-                        "action": "Edit the configuration file to add drush_command",
+                        "action": "Open Cursor from Drupal project directory OR edit config file",
                         "config_file": config_file,
+                        "recommended_fix": "Open Cursor from your Drupal project directory: cd /path/to/drupal && cursor .",
+                        "why": "Opening from the project directory ensures ddev/docker are in PATH",
+                        "alternative_fix": "Use absolute paths in config if can't open from project directory",
                         "add_property": "drush_command",
                         "example_values": {
-                            "ddev": "ddev drush",
+                            "ddev_relative": "ddev drush (only works if opened from project dir)",
+                            "ddev_absolute": "/opt/homebrew/bin/ddev drush (works anywhere)",
                             "lando": "lando drush",
                             "docksal": "fin drush",
                         },
@@ -152,7 +156,7 @@ def export_taxonomy_usage_to_csv(
                             "drupal_root": "/path/to/drupal",
                             "drush_command": "ddev drush",
                         },
-                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                        "help": "Option 1 (Best): Open Cursor from Drupal project directory. Option 2: Add absolute path to 'drush_command' in config. Then run check_scout_health() to verify.",
                     },
                 }
             )
@@ -457,11 +461,15 @@ def export_nodes_to_csv(
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
                     "ai_fix_instructions": {
-                        "action": "Edit the configuration file to add drush_command",
+                        "action": "Open Cursor from Drupal project directory OR edit config file",
                         "config_file": config_file,
+                        "recommended_fix": "Open Cursor from your Drupal project directory: cd /path/to/drupal && cursor .",
+                        "why": "Opening from the project directory ensures ddev/docker are in PATH",
+                        "alternative_fix": "Use absolute paths in config if can't open from project directory",
                         "add_property": "drush_command",
                         "example_values": {
-                            "ddev": "ddev drush",
+                            "ddev_relative": "ddev drush (only works if opened from project dir)",
+                            "ddev_absolute": "/opt/homebrew/bin/ddev drush (works anywhere)",
                             "lando": "lando drush",
                             "docksal": "fin drush",
                         },
@@ -469,7 +477,7 @@ def export_nodes_to_csv(
                             "drupal_root": "/path/to/drupal",
                             "drush_command": "ddev drush",
                         },
-                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                        "help": "Option 1 (Best): Open Cursor from Drupal project directory. Option 2: Add absolute path to 'drush_command' in config. Then run check_scout_health() to verify.",
                     },
                 }
             )
@@ -764,11 +772,15 @@ def export_users_to_csv(
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
                     "ai_fix_instructions": {
-                        "action": "Edit the configuration file to add drush_command",
+                        "action": "Open Cursor from Drupal project directory OR edit config file",
                         "config_file": config_file,
+                        "recommended_fix": "Open Cursor from your Drupal project directory: cd /path/to/drupal && cursor .",
+                        "why": "Opening from the project directory ensures ddev/docker are in PATH",
+                        "alternative_fix": "Use absolute paths in config if can't open from project directory",
                         "add_property": "drush_command",
                         "example_values": {
-                            "ddev": "ddev drush",
+                            "ddev_relative": "ddev drush (only works if opened from project dir)",
+                            "ddev_absolute": "/opt/homebrew/bin/ddev drush (works anywhere)",
                             "lando": "lando drush",
                             "docksal": "fin drush",
                         },
@@ -776,7 +788,7 @@ def export_users_to_csv(
                             "drupal_root": "/path/to/drupal",
                             "drush_command": "ddev drush",
                         },
-                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                        "help": "Option 1 (Best): Open Cursor from Drupal project directory. Option 2: Add absolute path to 'drush_command' in config. Then run check_scout_health() to verify.",
                     },
                 }
             )
