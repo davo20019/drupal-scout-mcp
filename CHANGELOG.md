@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2025-01-26
+
+### Added
+- **New system monitoring and maintenance tools:**
+  - `get_available_updates()` - Check for Drupal core and module updates without login
+    - Uses composer outdated to detect available updates
+    - Categorizes updates: Drupal core, contrib modules, dependencies
+    - Security-only mode using composer audit with CVE information
+    - Auto-detects DDEV/Lando/Docksal environments
+    - Classifies update types (safe minor/patch vs major breaking changes)
+    - Provides actionable recommendations and composer commands
+  - `get_status_report()` - Fetch Drupal status report data from CLI
+    - Equivalent to /admin/reports/status page
+    - Categorizes issues by severity: errors, warnings, info, OK checks
+    - Context-aware troubleshooting guidance for common issues
+    - Supports filtering by severity level
+    - Helps diagnose: permissions, AI providers, database, updates, cron, and more
+    - AI-friendly formatted output with specific fix recommendations
+
+### Fixed
+- Fixed severity parsing in `get_status_report` - properly handles both string severity ("Error", "Warning") and integer sid (2, 1, 0, -1) fields
+- Fixed undefined variable reference (changed `severity` to `severity_int` in filter logic)
+
+### Changed
+- Improved error messages and troubleshooting guidance in status report tool
+
 ## [1.4.0] - 2025-01-26
 
 ### Changed

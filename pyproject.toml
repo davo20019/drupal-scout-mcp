@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "drupal-scout-mcp"
-version = "1.4.0"
+version = "1.5.0"
 description = "MCP server for discovering Drupal module functionality"
 readme = "README.md"
 requires-python = ">=3.10"
