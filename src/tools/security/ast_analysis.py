@@ -88,7 +88,7 @@ def _has_sql_concatenation_ast(file_path: Path, line_num: int) -> bool:
                 ) @concat
               )
             )
-            """
+            """,
         )
 
         captures = query.captures(tree.root_node)
@@ -168,7 +168,7 @@ def _has_unsafe_echo_ast(file_path: Path, line_num: int) -> bool:
             (print_intrinsic
               (variable) @var
             )
-            """
+            """,
         )
 
         captures = query.captures(tree.root_node)
