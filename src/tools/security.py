@@ -428,7 +428,9 @@ def _is_false_positive(line: str, pattern_name: str, category: str) -> bool:
         if pattern_name == "sql_concat":
             # If the line contains SQL keywords but no actual query construction
             # Look for non-SQL contexts like variable names containing "select"
-            if not any(keyword in line_lower for keyword in ["db_query", "->query(", "mysqli", "pdo"]):
+            if not any(
+                keyword in line_lower for keyword in ["db_query", "->query(", "mysqli", "pdo"]
+            ):
                 # Likely a false positive if no database functions present
                 return True
 
@@ -467,7 +469,10 @@ def _is_false_positive(line: str, pattern_name: str, category: str) -> bool:
     # Hardcoded secrets false positives
     if category == "hardcoded_secrets":
         # Example values, placeholders, or comments
-        if any(word in line_lower for word in ["example", "placeholder", "your_api_key", "your_password", "xxx"]):
+        if any(
+            word in line_lower
+            for word in ["example", "placeholder", "your_api_key", "your_password", "xxx"]
+        ):
             return True
         # Test files
         if "/test" in line_lower or "test.php" in line_lower or "phpunit" in line_lower:
@@ -742,9 +747,7 @@ def _get_php_files(module_path: Path) -> List[Path]:
     return sorted(php_files)
 
 
-def _format_findings(
-    findings: List[SecurityFinding], title: str, max_findings: int = 50
-) -> str:
+def _format_findings(findings: List[SecurityFinding], title: str, max_findings: int = 50) -> str:
     """Format security findings as a readable report with limit."""
     if not findings:
         return f"✅ {title}: No issues found"
@@ -786,7 +789,9 @@ def _format_findings(
         # Show truncation notice
         if len(severity_findings) > remaining_quota:
             not_shown = len(severity_findings) - remaining_quota
-            output.append(f"   ... {not_shown} more {severity} issues not shown (use max_findings parameter)")
+            output.append(
+                f"   ... {not_shown} more {severity} issues not shown (use max_findings parameter)"
+            )
             output.append("")
 
     # Overall truncation notice
@@ -869,7 +874,9 @@ def scan_xss(module_name: str, module_path: Optional[str] = None, max_findings: 
         output.append("  • https://www.drupal.org/node/101495 (XSS prevention)")
         if len(all_findings) > max_findings:
             output.append("")
-            output.append(f"💡 Use scan_xss('{module_name}', max_findings=100) to see more findings")
+            output.append(
+                f"💡 Use scan_xss('{module_name}', max_findings=100) to see more findings"
+            )
         output.append("")
         output.append("⚠️  LIMITATIONS: Pattern-based analysis may miss:")
         output.append("   - Multi-line code patterns and complex data flow")
@@ -885,7 +892,9 @@ def scan_xss(module_name: str, module_path: Optional[str] = None, max_findings: 
 
 
 @mcp.tool()
-def scan_sql_injection(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_sql_injection(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for SQL injection vulnerabilities.
 
@@ -949,13 +958,17 @@ def scan_sql_injection(module_name: str, module_path: Optional[str] = None, max_
         output.append("   For production audits, use manual review + static analysis tools.")
     else:
         output.append("✅ No SQL injection vulnerabilities detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
 
 @mcp.tool()
-def scan_access_control(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_access_control(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for missing access control checks.
 
@@ -1019,13 +1032,17 @@ def scan_access_control(module_name: str, module_path: Optional[str] = None, max
         output.append("   Manual review recommended for complex permission logic.")
     else:
         output.append("✅ No access control issues detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
 
 @mcp.tool()
-def scan_deprecated_api(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_deprecated_api(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for deprecated or unsafe API usage.
 
@@ -1090,7 +1107,9 @@ def scan_deprecated_api(module_name: str, module_path: Optional[str] = None, max
         output.append("   May miss custom wrappers or indirect usage.")
     else:
         output.append("✅ No deprecated or unsafe API usage detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
@@ -1184,7 +1203,9 @@ def scan_csrf(module_name: str, module_path: Optional[str] = None, max_findings:
         output.append("✅ No obvious CSRF protection gaps detected.")
         output.append("")
         output.append("⚠️  Note: This scan checks for patterns in PHP code.")
-        output.append("   AI should verify routing files (*.routing.yml) for complete CSRF analysis.")
+        output.append(
+            "   AI should verify routing files (*.routing.yml) for complete CSRF analysis."
+        )
         output.append("")
         output.append("Recommendations:")
         output.append(f"  1. list_module_files('{module_name}', '*.routing.yml')")
@@ -1195,7 +1216,9 @@ def scan_csrf(module_name: str, module_path: Optional[str] = None, max_findings:
 
 
 @mcp.tool()
-def scan_command_injection(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_command_injection(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for command injection vulnerabilities.
 
@@ -1244,7 +1267,9 @@ def scan_command_injection(module_name: str, module_path: Optional[str] = None, 
     # Scan for command injection patterns
     all_findings = []
     for php_file in php_files:
-        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        findings = _scan_file_for_patterns(
+            php_file, COMMAND_INJECTION_PATTERNS, "command_injection"
+        )
         all_findings.extend(findings)
 
     # Format results
@@ -1262,13 +1287,17 @@ def scan_command_injection(module_name: str, module_path: Optional[str] = None, 
         output.append("   For production audits, use manual review + static analysis tools.")
     else:
         output.append("✅ No command injection vulnerabilities detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
 
 @mcp.tool()
-def scan_path_traversal(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_path_traversal(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for path traversal vulnerabilities.
 
@@ -1330,19 +1359,25 @@ def scan_path_traversal(module_name: str, module_path: Optional[str] = None, max
     if all_findings:
         output.append("📚 RESOURCES:")
         output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
-        output.append("  • https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/01-Testing_Directory_Traversal_File_Include")
+        output.append(
+            "  • https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/05-Authorization_Testing/01-Testing_Directory_Traversal_File_Include"
+        )
         output.append("")
         output.append("⚠️  LIMITATIONS: May miss complex path manipulation and validation.")
         output.append("   For production audits, use manual review + penetration testing.")
     else:
         output.append("✅ No path traversal vulnerabilities detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
 
 @mcp.tool()
-def scan_hardcoded_secrets(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_hardcoded_secrets(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Scan a Drupal module for hardcoded secrets and credentials.
 
@@ -1393,7 +1428,9 @@ def scan_hardcoded_secrets(module_name: str, module_path: Optional[str] = None, 
     # Scan for hardcoded secrets
     all_findings = []
     for php_file in php_files:
-        findings = _scan_file_for_patterns(php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets")
+        findings = _scan_file_for_patterns(
+            php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets"
+        )
         all_findings.extend(findings)
 
     # Format results
@@ -1411,13 +1448,17 @@ def scan_hardcoded_secrets(module_name: str, module_path: Optional[str] = None, 
         output.append("")
         output.append("📚 RESOURCES:")
         output.append("  • https://www.drupal.org/docs/security-in-drupal/managing-sensitive-data")
-        output.append("  • https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password")
+        output.append(
+            "  • https://owasp.org/www-community/vulnerabilities/Use_of_hard-coded_password"
+        )
         output.append("")
         output.append("⚠️  LIMITATIONS: Pattern-based detection may have false positives.")
         output.append("   May flag example values in documentation. Review each finding.")
     else:
         output.append("✅ No hardcoded secrets detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append(
+            "   Note: This is pattern-based detection. Manual review is still recommended."
+        )
 
     return "\n".join(output)
 
@@ -1518,7 +1559,9 @@ def security_audit(
 
     # Command injection scan
     for php_file in php_files:
-        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        findings = _scan_file_for_patterns(
+            php_file, COMMAND_INJECTION_PATTERNS, "command_injection"
+        )
         all_findings.extend(findings)
 
     # Path traversal scan
@@ -1528,7 +1571,9 @@ def security_audit(
 
     # Hardcoded secrets scan
     for php_file in php_files:
-        findings = _scan_file_for_patterns(php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets")
+        findings = _scan_file_for_patterns(
+            php_file, HARDCODED_SECRETS_PATTERNS, "hardcoded_secrets"
+        )
         all_findings.extend(findings)
 
     # Apply severity filter if specified
@@ -1573,7 +1618,9 @@ def security_audit(
         output.append("✅ No security issues detected using common patterns.")
         output.append("")
         output.append("This module appears to follow Drupal security best practices.")
-        output.append("Note: This is pattern-based detection. Manual security review is still recommended.")
+        output.append(
+            "Note: This is pattern-based detection. Manual security review is still recommended."
+        )
         return "\n".join(output)
 
     # SUMMARY MODE: Just show counts, no details
@@ -1588,7 +1635,9 @@ def security_audit(
             output.append("")
 
         output.append("For detailed analysis, use:")
-        output.append(f"  • security_audit('{module_name}', mode='high_only') - Show HIGH severity details")
+        output.append(
+            f"  • security_audit('{module_name}', mode='high_only') - Show HIGH severity details"
+        )
         output.append(
             f"  • security_audit('{module_name}', mode='findings', max_findings=20) - Show first 20 findings"
         )
@@ -1726,7 +1775,7 @@ def _parse_routing_file(routing_file: Path) -> Dict[str, Dict]:
     import yaml
 
     try:
-        with open(routing_file, 'r') as f:
+        with open(routing_file, "r") as f:
             routes = yaml.safe_load(f) or {}
 
         route_info = {}
@@ -1735,40 +1784,42 @@ def _parse_routing_file(routing_file: Path) -> Dict[str, Dict]:
                 continue
 
             # Extract access requirements
-            requirements = route_config.get('requirements', {})
+            requirements = route_config.get("requirements", {})
 
             # Determine if anonymous users can access
             is_anonymous_accessible = True
             access_level = "PUBLIC"
 
-            if '_permission' in requirements:
-                permission = requirements['_permission']
+            if "_permission" in requirements:
+                permission = requirements["_permission"]
                 # Check if it's a restrictive permission
-                if permission and permission not in ['access content']:
+                if permission and permission not in ["access content"]:
                     is_anonymous_accessible = False
                     access_level = f"REQUIRES: {permission}"
 
-            if '_role' in requirements:
-                role = requirements['_role']
-                if 'anonymous' not in role.lower():
+            if "_role" in requirements:
+                role = requirements["_role"]
+                if "anonymous" not in role.lower():
                     is_anonymous_accessible = False
                     access_level = f"REQUIRES ROLE: {role}"
 
-            if '_access' in requirements:
-                if requirements['_access'] != 'TRUE':
+            if "_access" in requirements:
+                if requirements["_access"] != "TRUE":
                     is_anonymous_accessible = False
                     access_level = f"CUSTOM ACCESS: {requirements['_access']}"
 
             # Extract controller/form info
-            defaults = route_config.get('defaults', {})
-            controller = defaults.get('_controller', defaults.get('_form', defaults.get('_entity_form', 'unknown')))
+            defaults = route_config.get("defaults", {})
+            controller = defaults.get(
+                "_controller", defaults.get("_form", defaults.get("_entity_form", "unknown"))
+            )
 
             route_info[route_name] = {
-                'anonymous_accessible': is_anonymous_accessible,
-                'access_level': access_level,
-                'controller': controller,
-                'path': route_config.get('path', ''),
-                'methods': route_config.get('methods', ['GET']),
+                "anonymous_accessible": is_anonymous_accessible,
+                "access_level": access_level,
+                "controller": controller,
+                "path": route_config.get("path", ""),
+                "methods": route_config.get("methods", ["GET"]),
             }
 
         return route_info
@@ -1778,7 +1829,9 @@ def _parse_routing_file(routing_file: Path) -> Dict[str, Dict]:
         return {}
 
 
-def _map_findings_to_routes(module_dir: Path, findings: List[SecurityFinding]) -> Dict[str, List[SecurityFinding]]:
+def _map_findings_to_routes(
+    module_dir: Path, findings: List[SecurityFinding]
+) -> Dict[str, List[SecurityFinding]]:
     """
     Map security findings to their routes by matching controller/form classes.
 
@@ -1804,22 +1857,21 @@ def _map_findings_to_routes(module_dir: Path, findings: List[SecurityFinding]) -
 
         # Try to match with route controllers
         for route_name, route_info in all_routes.items():
-            controller = route_info['controller']
+            controller = route_info["controller"]
 
             # Check if finding file matches controller
-            if file_path.stem in controller or controller.split('::')[0].endswith(file_path.stem):
+            if file_path.stem in controller or controller.split("::")[0].endswith(file_path.stem):
                 if route_name not in route_findings:
-                    route_findings[route_name] = {
-                        'route_info': route_info,
-                        'findings': []
-                    }
-                route_findings[route_name]['findings'].append(finding)
+                    route_findings[route_name] = {"route_info": route_info, "findings": []}
+                route_findings[route_name]["findings"].append(finding)
 
     return route_findings
 
 
 @mcp.tool()
-def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None, max_findings: int = 50) -> str:
+def scan_anonymous_exploits(
+    module_name: str, module_path: Optional[str] = None, max_findings: int = 50
+) -> str:
     """
     Identify security vulnerabilities that are exploitable by anonymous (unauthenticated) users.
 
@@ -1888,7 +1940,9 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
 
     # Command injection - anonymously exploitable
     for php_file in php_files:
-        findings = _scan_file_for_patterns(php_file, COMMAND_INJECTION_PATTERNS, "command_injection")
+        findings = _scan_file_for_patterns(
+            php_file, COMMAND_INJECTION_PATTERNS, "command_injection"
+        )
         all_findings.extend(findings)
 
     # Path traversal - anonymously exploitable
@@ -1913,7 +1967,9 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
         output.append("")
         output.append("Showing all HIGH severity findings (manual route review needed):")
         output.append("")
-        output.append(_format_findings(high_findings, "HIGH Severity Vulnerabilities", max_findings))
+        output.append(
+            _format_findings(high_findings, "HIGH Severity Vulnerabilities", max_findings)
+        )
         return "\n".join(output)
 
     # Parse all routes
@@ -1926,8 +1982,8 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
         all_routes.update(routes)
 
     # Categorize routes
-    anonymous_routes = {k: v for k, v in all_routes.items() if v['anonymous_accessible']}
-    protected_routes = {k: v for k, v in all_routes.items() if not v['anonymous_accessible']}
+    anonymous_routes = {k: v for k, v in all_routes.items() if v["anonymous_accessible"]}
+    protected_routes = {k: v for k, v in all_routes.items() if not v["anonymous_accessible"]}
 
     output.append(f"   • {len(anonymous_routes)} routes accessible to ANONYMOUS users")
     output.append(f"   • {len(protected_routes)} routes require authentication")
@@ -1938,7 +1994,9 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
         output.append("   All vulnerabilities require authentication to exploit.")
         output.append("")
         output.append(f"However, {len(high_findings)} HIGH severity issues still need fixing:")
-        output.append(_format_findings(high_findings, "Authenticated Vulnerabilities", max_findings))
+        output.append(
+            _format_findings(high_findings, "Authenticated Vulnerabilities", max_findings)
+        )
         return "\n".join(output)
 
     # Map findings to routes
@@ -1948,13 +2006,11 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
     anonymous_exploits = []
 
     for route_name, data in route_findings_map.items():
-        if data['route_info']['anonymous_accessible']:
-            for finding in data['findings']:
-                anonymous_exploits.append({
-                    'route': route_name,
-                    'route_info': data['route_info'],
-                    'finding': finding
-                })
+        if data["route_info"]["anonymous_accessible"]:
+            for finding in data["findings"]:
+                anonymous_exploits.append(
+                    {"route": route_name, "route_info": data["route_info"], "finding": finding}
+                )
 
     output.append("─" * 80)
     output.append("")
@@ -1962,7 +2018,9 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
     if not anonymous_exploits:
         output.append("✅ GOOD NEWS: No HIGH severity vulnerabilities in anonymous routes!")
         output.append("")
-        output.append(f"Note: Module has {len(anonymous_routes)} anonymous routes, but no mapped HIGH severity issues.")
+        output.append(
+            f"Note: Module has {len(anonymous_routes)} anonymous routes, but no mapped HIGH severity issues."
+        )
         output.append("")
         output.append("⚠️  However, this does NOT guarantee safety:")
         output.append("   • Vulnerabilities may exist in code called by controllers")
@@ -1975,15 +2033,17 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
             output.append(f"     Controller: {route_info['controller']}")
             output.append("")
     else:
-        output.append(f"🚨 CRITICAL: {len(anonymous_exploits)} ANONYMOUSLY EXPLOITABLE VULNERABILITIES!")
+        output.append(
+            f"🚨 CRITICAL: {len(anonymous_exploits)} ANONYMOUSLY EXPLOITABLE VULNERABILITIES!"
+        )
         output.append("")
         output.append("These can be exploited REMOTELY without authentication:")
         output.append("")
 
         shown = 0
         for exploit in anonymous_exploits[:max_findings]:
-            finding = exploit['finding']
-            route_info = exploit['route_info']
+            finding = exploit["finding"]
+            route_info = exploit["route_info"]
 
             output.append(f"❌ {exploit['route']}")
             output.append(f"   Route: {route_info['path']} ({', '.join(route_info['methods'])})")
@@ -1996,7 +2056,9 @@ def scan_anonymous_exploits(module_name: str, module_path: Optional[str] = None,
             shown += 1
 
         if len(anonymous_exploits) > max_findings:
-            output.append(f"... {len(anonymous_exploits) - max_findings} more anonymous exploits not shown")
+            output.append(
+                f"... {len(anonymous_exploits) - max_findings} more anonymous exploits not shown"
+            )
             output.append("")
 
         output.append("─" * 80)
