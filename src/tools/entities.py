@@ -90,8 +90,30 @@ def get_entity_structure(entity_type: str) -> str:
     # Format output
     output = [f"📦 **Entity Structure: `{entity_type}`**\n"]
 
+    # Check if entity type was not found
+    if entity_info and entity_info.get("_not_found"):
+        output.append("⚠️  **Entity Type Not Found**\n")
+        output.append(f"The entity type `{entity_type}` does not exist in your Drupal site.\n")
+        output.append("**Common reasons:**\n")
+        output.append(f"• The module providing this entity type is not enabled")
+        output.append(f"• The entity type name may be incorrect")
+        output.append(f"• The module needs to be installed first\n")
+
+        # Try to suggest the module name from the entity type
+        # Common patterns: webform_submission -> webform, commerce_product -> commerce
+        suggested_module = entity_type.split("_")[0]
+        output.append("**Suggestions:**\n")
+        output.append(f"• Check if `{suggested_module}` module is installed:")
+        output.append(f"  `drush pm:list --filter={suggested_module}`")
+        output.append(f"• Enable the module if available:")
+        output.append(f"  `drush en {suggested_module} -y`")
+        output.append(f"• Install via composer if not present:")
+        output.append(f"  `composer require drupal/{suggested_module}`\n")
+
+        return "\n".join(output)
+
     # Entity type info (if available from drush)
-    if entity_info:
+    if entity_info and not entity_info.get("_not_found"):
         output.append("## Entity Type Information\n")
         output.append(f"**Label:** {entity_info.get('label', 'N/A')}")
         output.append(f"**Provider:** {entity_info.get('provider', 'N/A')}")
@@ -156,23 +178,32 @@ def get_entity_structure(entity_type: str) -> str:
 
 def _get_entity_info_from_drush(entity_type: str) -> Optional[dict]:
     """Get entity type info using drush eval."""
-    try:
-        # Try to get entity definition via drush
-        php_code = f"""
-        $entity_type_manager = \\Drupal::entityTypeManager();
-        $definition = $entity_type_manager->getDefinition('{entity_type}');
-        echo json_encode([
-            'label' => $definition->getLabel()->__toString(),
-            'provider' => $definition->getProvider(),
-            'bundles' => array_keys(\\Drupal::service('entity_type.bundle.info')->getBundleInfo('{entity_type}'))
-        ]);
-        """
+    # Try to get entity definition via drush
+    php_code = f"""
+    $entity_type_manager = \\Drupal::entityTypeManager();
+    $definition = $entity_type_manager->getDefinition('{entity_type}');
+    echo json_encode([
+        'label' => $definition->getLabel()->__toString(),
+        'provider' => $definition->getProvider(),
+        'bundles' => array_keys(\\Drupal::service('entity_type.bundle.info')->getBundleInfo('{entity_type}'))
+    ]);
+    """
 
-        result = run_drush_command(["ev", php_code.strip()], timeout=10)
-        return result
-    except Exception as e:
-        logger.debug(f"Could not get entity info from drush: {e}")
+    result = run_drush_command(["ev", php_code.strip()], timeout=10, return_raw_error=True)
+
+    # Check if drush returned an error
+    if result and result.get("_error"):
+        error_msg = result.get("_error_message", "")
+
+        # Check if entity type doesn't exist
+        if "does not exist" in error_msg or "is not defined" in error_msg:
+            logger.debug(f"Entity type '{entity_type}' not found - likely module not enabled")
+            return {"_not_found": True, "_error_message": error_msg, "_entity_type": entity_type}
+
+        logger.debug(f"Could not get entity info from drush: {error_msg}")
         return None
+
+    return result
 
 
 def _get_field_configs(entity_type: str, drupal_root: Path) -> List[dict]:
