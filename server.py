@@ -28,19 +28,16 @@ from src.core.database import verify_database_connection, check_module_enabled
 # Existing modules
 from src.drupal_org import format_drupal_org_results, generate_recommendations
 
-# Export tool helpers
-from src.tools.exports import (
-    _get_term_usage_from_drush,
-    _get_all_terms_usage_from_drush,
-    _add_code_usage_to_terms,
-)
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastMCP server
 mcp = FastMCP("Drupal Scout")
+
+# Import tool modules to register @mcp.tool() decorated functions
+# IMPORTANT: Must import AFTER mcp instance is created (above)
+import src.tools.exports  # noqa: E402, F401
 
 # Note: Core utilities (config, drush, database) moved to src/core/
 # Global state is now managed by core modules for better modularity
@@ -2504,6 +2501,9 @@ def _get_term_usage_analysis(term_id: int, drupal_root: Path) -> str:
             f"Without database access, Scout cannot determine if this term is safe to delete."
         )
 
+    # Lazy import to avoid circular dependency
+    from src.tools.exports import _get_term_usage_from_drush
+
     usage_data = _get_term_usage_from_drush(term_id)
 
     if not usage_data:
@@ -3039,6 +3039,9 @@ def get_all_taxonomy_usage(
                 }
             )
 
+        # Lazy import to avoid circular dependency
+        from src.tools.exports import _get_all_terms_usage_from_drush
+
         # Get all term usage data in one optimized query
         usage_data = _get_all_terms_usage_from_drush(vocabulary, max_sample_nodes, summary_only)
 
@@ -3062,6 +3065,9 @@ def get_all_taxonomy_usage(
 
         # Add code/config usage if requested (only for returned terms)
         if check_code and not summary_only:
+            # Lazy import to avoid circular dependency
+            from src.tools.exports import _add_code_usage_to_terms
+
             usage_data = _add_code_usage_to_terms(usage_data, drupal_root)
 
         # Add metadata about results
