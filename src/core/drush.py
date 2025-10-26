@@ -36,6 +36,26 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
     details["drush_found"] = True
     details["drush_command"] = " ".join(drush_cmd)
 
+    # Ensure PATH includes common tool locations when running via MCP
+    # MCP servers may have limited PATH, missing ddev/docker/lando/fin
+    import os
+    env = os.environ.copy()
+
+    # Add standard system paths if not already present
+    standard_paths = [
+        "/usr/local/bin",      # Standard Unix location (Intel Mac, Linux)
+        "/opt/homebrew/bin",   # Homebrew on Apple Silicon
+        "/usr/bin",            # System binaries
+        "/bin",                # Core system binaries
+    ]
+
+    current_path = env.get('PATH', '')
+    paths_to_add = [p for p in standard_paths if p not in current_path]
+
+    if paths_to_add:
+        env['PATH'] = ':'.join(paths_to_add) + ':' + current_path
+
+
     # Try to get drush version
     try:
         from src.core.config import get_config
@@ -49,6 +69,7 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
             capture_output=True,
             text=True,
             timeout=10,
+            env=env,
         )
 
         if result.returncode == 0 and result.stdout.strip():
@@ -65,6 +86,7 @@ def test_drush_connectivity() -> Tuple[bool, str, dict]:
             capture_output=True,
             text=True,
             timeout=10,
+            env=env,
         )
 
         if result.returncode == 0 and result.stdout.strip():
@@ -253,12 +275,33 @@ def run_drush_command(args: List[str], timeout: int = 30, return_raw_error: bool
 
     try:
         logger.debug(f"Running: {' '.join(full_cmd)}")
+
+        # Ensure PATH includes common tool locations when running via MCP
+        # MCP servers may have limited PATH, missing ddev/docker/lando/fin
+        import os
+        env = os.environ.copy()
+
+        # Add standard system paths if not already present
+        standard_paths = [
+            "/usr/local/bin",      # Standard Unix location (Intel Mac, Linux)
+            "/opt/homebrew/bin",   # Homebrew on Apple Silicon
+            "/usr/bin",            # System binaries
+            "/bin",                # Core system binaries
+        ]
+
+        current_path = env.get('PATH', '')
+        paths_to_add = [p for p in standard_paths if p not in current_path]
+
+        if paths_to_add:
+            env['PATH'] = ':'.join(paths_to_add) + ':' + current_path
+
         result = subprocess.run(
             full_cmd,
             cwd=str(drupal_root),
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=env,
         )
 
         if result.returncode != 0:
