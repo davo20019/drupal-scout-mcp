@@ -920,11 +920,11 @@ def get_status_report(
         # Apply filters
         if severity_filter:
             filter_level = severity_map.get(severity_filter.lower())
-            if filter_level is not None and severity != filter_level:
+            if filter_level is not None and severity_int != filter_level:
                 continue
 
         # Skip OK checks unless explicitly included
-        if not include_ok and severity == 0:
+        if not include_ok and severity_int == 0:
             continue
 
         filtered_requirements[key] = requirement
