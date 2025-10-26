@@ -3483,63 +3483,10 @@ def check_scout_health() -> str:
 
 def main():
     """Main entry point for the MCP server."""
-    logger.info("=" * 70)
-    logger.info("🚀 Starting Drupal Scout MCP Server")
-    logger.info("=" * 70)
-
-    # Pre-index if config exists
-    try:
-        ensure_indexed()
-        logger.info("✅ Initial indexing complete")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not pre-index: {e}")
-        logger.info("   Will index on first request")
-
-    # Test drush connectivity on startup
-    logger.info("")
-    logger.info("🔍 Testing drush connectivity...")
-    try:
-        from src.core.drush import test_drush_connectivity
-
-        drush_ok, drush_msg, drush_details = test_drush_connectivity()
-        if drush_ok:
-            logger.info(f"✅ {drush_msg}")
-            if drush_details.get("drupal_version"):
-                logger.info(f"   Drupal {drush_details['drupal_version']}")
-        else:
-            logger.warning(f"⚠️  {drush_msg}")
-            logger.warning("")
-            logger.warning("   Some database-dependent tools may not work.")
-            logger.warning("   Run check_scout_health() for detailed diagnostics.")
-            logger.warning("")
-            if not drush_details.get("drush_found"):
-                # Get config file location for AI to know where to edit
-                config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
-                local_config = Path("config.json")
-
-                if config_path.exists():
-                    config_file = str(config_path)
-                elif local_config.exists():
-                    config_file = str(local_config.absolute())
-                else:
-                    config_file = str(config_path)
-
-                logger.warning("   💡 QUICK FIX:")
-                logger.warning("   1. Open Cursor from your Drupal project directory:")
-                logger.warning("      cd /path/to/drupal && cursor .")
-                logger.warning("")
-                logger.warning("   2. OR use absolute path in config:")
-                logger.warning(f"      Edit: {config_file}")
-                logger.warning('      Add: "drush_command": "/opt/homebrew/bin/ddev drush"')
-            logger.warning("")
-    except Exception as e:
-        logger.warning(f"⚠️  Could not test drush: {e}")
-
-    logger.info("")
-    logger.info("=" * 70)
-    logger.info("✅ Server ready - Listening for MCP requests")
-    logger.info("=" * 70)
-    logger.info("")
+    # Note: Pre-indexing and drush testing moved to lazy initialization
+    # to avoid delaying MCP server startup which can cause connection issues
+    logger.info("🚀 Starting Drupal Scout MCP Server...")
+    logger.info("   (Modules will be indexed on first request)")
 
     # Run the server
     mcp.run()
