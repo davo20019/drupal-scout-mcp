@@ -19,7 +19,7 @@ from typing import List, Optional
 from src.core.drush import get_drush_command
 
 # Import shared export utilities
-from src.tools.exports_common import get_export_config, validate_export_path
+from src.tools.exports.common import get_export_config, validate_export_path
 
 # Import MCP instance from server
 from server import mcp

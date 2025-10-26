@@ -24,9 +24,7 @@ if __name__ == "__main__":
 
 # Import tool modules to register @mcp.tool() decorated functions
 # IMPORTANT: Must import AFTER mcp instance is created (above)
-import src.tools.exports_taxonomy  # noqa: E402, F401
-import src.tools.exports_nodes  # noqa: E402, F401
-import src.tools.exports_users  # noqa: E402, F401
+import src.tools.exports  # noqa: E402, F401
 import src.tools.drupal_org  # noqa: E402, F401
 import src.tools.system  # noqa: E402, F401
 import src.tools.entities  # noqa: E402, F401
