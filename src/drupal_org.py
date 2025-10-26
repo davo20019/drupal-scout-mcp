@@ -191,8 +191,8 @@ class DrupalOrgAPI:
         try:
             params = {
                 "type": "project_module",
-                "sort": "usage",
-                "direction": "DESC",
+                # NOTE: drupal.org API doesn't support sort=usage parameter (causes 503)
+                # We'll fetch more results and sort client-side instead
             }
 
             if category:
@@ -203,14 +203,19 @@ class DrupalOrgAPI:
             with urllib.request.urlopen(url, timeout=10) as response:
                 data = json.loads(response.read().decode())
 
+            # Parse all returned modules
             modules = []
-            for item in data.get("list", [])[:limit]:
+            for item in data.get("list", []):
                 module_info = self._parse_module(item)
                 if module_info:
                     modules.append(module_info)
 
-            self.cache[cache_key] = (time.time(), modules)
-            return modules
+            # Sort by usage (descending) and return top N
+            modules.sort(key=lambda m: m.get("project_usage", 0), reverse=True)
+            top_modules = modules[:limit]
+
+            self.cache[cache_key] = (time.time(), top_modules)
+            return top_modules
 
         except Exception as e:
             logger.error(f"Error fetching popular modules: {e}")
