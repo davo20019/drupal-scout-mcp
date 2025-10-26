@@ -121,7 +121,12 @@ def get_watchdog_logs(
         drush_severity = valid_severities[severity_lower]
 
         # Single severity - simple case
-        args = ["watchdog:show", "--format=json", f"--count={limit}", f"--severity={drush_severity}"]
+        args = [
+            "watchdog:show",
+            "--format=json",
+            f"--count={limit}",
+            f"--severity={drush_severity}",
+        ]
         if type:
             args.append(f"--type={type}")
 
@@ -346,8 +351,12 @@ def check_scout_health() -> str:
         elif not drush_details.get("database_connected"):
             output.append("🔧 TROUBLESHOOTING - Database Not Connected:")
             output.append("")
-            output.append("🤖 AI ASSISTANT: The drush command was found but cannot connect to the database.")
-            output.append(f"   Drush command being used: {drush_details.get('drush_command', 'unknown')}")
+            output.append(
+                "🤖 AI ASSISTANT: The drush command was found but cannot connect to the database."
+            )
+            output.append(
+                f"   Drush command being used: {drush_details.get('drush_command', 'unknown')}"
+            )
             output.append("")
             output.append("Recommended actions:")
             output.append("1. Start/restart the development environment:")
