@@ -124,10 +124,36 @@ def export_taxonomy_usage_to_csv(
         # Verify database connection first
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
+            # Get config file location for AI to know where to edit
+            config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+            local_config = Path("config.json")
+
+            if config_path.exists():
+                config_file = str(config_path)
+            elif local_config.exists():
+                config_file = str(local_config.absolute())
+            else:
+                config_file = str(config_path)
+
             return json.dumps(
                 {
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
+                    "ai_fix_instructions": {
+                        "action": "Edit the configuration file to add drush_command",
+                        "config_file": config_file,
+                        "add_property": "drush_command",
+                        "example_values": {
+                            "ddev": "ddev drush",
+                            "lando": "lando drush",
+                            "docksal": "fin drush",
+                        },
+                        "example_config": {
+                            "drupal_root": "/path/to/drupal",
+                            "drush_command": "ddev drush",
+                        },
+                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                    },
                 }
             )
 
@@ -415,10 +441,36 @@ def export_nodes_to_csv(
         # Verify database connection
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
+            # Get config file location for AI to know where to edit
+            config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+            local_config = Path("config.json")
+
+            if config_path.exists():
+                config_file = str(config_path)
+            elif local_config.exists():
+                config_file = str(local_config.absolute())
+            else:
+                config_file = str(config_path)
+
             return json.dumps(
                 {
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
+                    "ai_fix_instructions": {
+                        "action": "Edit the configuration file to add drush_command",
+                        "config_file": config_file,
+                        "add_property": "drush_command",
+                        "example_values": {
+                            "ddev": "ddev drush",
+                            "lando": "lando drush",
+                            "docksal": "fin drush",
+                        },
+                        "example_config": {
+                            "drupal_root": "/path/to/drupal",
+                            "drush_command": "ddev drush",
+                        },
+                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                    },
                 }
             )
 
@@ -696,10 +748,36 @@ def export_users_to_csv(
         # Verify database connection
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
+            # Get config file location for AI to know where to edit
+            config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+            local_config = Path("config.json")
+
+            if config_path.exists():
+                config_file = str(config_path)
+            elif local_config.exists():
+                config_file = str(local_config.absolute())
+            else:
+                config_file = str(config_path)
+
             return json.dumps(
                 {
                     "_error": True,
                     "message": f"Database connection required. {db_msg}",
+                    "ai_fix_instructions": {
+                        "action": "Edit the configuration file to add drush_command",
+                        "config_file": config_file,
+                        "add_property": "drush_command",
+                        "example_values": {
+                            "ddev": "ddev drush",
+                            "lando": "lando drush",
+                            "docksal": "fin drush",
+                        },
+                        "example_config": {
+                            "drupal_root": "/path/to/drupal",
+                            "drush_command": "ddev drush",
+                        },
+                        "help": "Add 'drush_command' to the config file with the appropriate value for your development environment (ddev drush, lando drush, or fin drush). Then run check_scout_health() to verify.",
+                    },
                 }
             )
 

@@ -3346,30 +3346,59 @@ def check_scout_health() -> str:
         output.append("")
 
         if not drush_details.get("drush_found"):
+            # Get config file location
+            config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+            local_config = Path("config.json")
+
+            # Determine which config file exists
+            if config_path.exists():
+                config_file = str(config_path)
+            elif local_config.exists():
+                config_file = str(local_config.absolute())
+            else:
+                config_file = str(config_path)  # Use default location if neither exists
+
             output.append("🔧 TROUBLESHOOTING - Drush Not Found:")
             output.append("")
-            output.append("Option 1: Configure drush_command in config.json")
-            output.append("   Add this to your config.json:")
+            output.append("🤖 AI ASSISTANT: To fix this issue, add the following to the config file:")
+            output.append(f"   Config file location: {config_file}")
+            output.append("")
+            output.append("   Add this JSON property to the config:")
             output.append('   "drush_command": "ddev drush"')
             output.append("")
-            output.append("Option 2: Ensure dev environment is running")
-            output.append("   • DDEV: ddev start && ddev drush status")
-            output.append("   • Lando: lando start && lando drush status")
+            output.append("   Choose the appropriate command for your environment:")
+            output.append('   • DDEV users: "drush_command": "ddev drush"')
+            output.append('   • Lando users: "drush_command": "lando drush"')
+            output.append('   • Docksal users: "drush_command": "fin drush"')
             output.append("")
-            output.append("Option 3: Install drush globally")
-            output.append("   composer global require drush/drush")
+            output.append("   Example complete config.json:")
+            output.append("   {")
+            output.append('     "drupal_root": "/path/to/drupal",')
+            output.append('     "drush_command": "ddev drush"')
+            output.append("   }")
+            output.append("")
+            output.append("Alternative fixes:")
+            output.append("   • Ensure dev environment is running: ddev start")
+            output.append("   • Install drush globally: composer global require drush/drush")
             output.append("")
         elif not drush_details.get("database_connected"):
             output.append("🔧 TROUBLESHOOTING - Database Not Connected:")
             output.append("")
-            output.append("1. Verify dev environment is running:")
-            output.append(f"   {drush_details['drush_command']} status")
+            output.append("🤖 AI ASSISTANT: The drush command was found but cannot connect to the database.")
+            output.append(f"   Drush command being used: {drush_details.get('drush_command', 'unknown')}")
             output.append("")
-            output.append("2. Check database credentials in settings.php")
+            output.append("Recommended actions:")
+            output.append("1. Start/restart the development environment:")
+            output.append("   • For DDEV: Run 'ddev start' then 'ddev drush status'")
+            output.append("   • For Lando: Run 'lando start' then 'lando drush status'")
+            output.append("   • For Docksal: Run 'fin project start' then 'fin drush status'")
             output.append("")
-            output.append("3. For DDEV users:")
+            output.append("2. If environment is running, check database status:")
+            output.append(f"   {drush_details.get('drush_command', 'drush')} status")
+            output.append("")
+            output.append("3. For DDEV users, verify database container:")
             output.append("   • ddev describe (check database info)")
-            output.append("   • ddev logs (check for errors)")
+            output.append("   • ddev logs -f (check for errors)")
             output.append("")
 
         output.append("⚠️  IMPACT: Database-dependent features will NOT work:")
@@ -3481,8 +3510,21 @@ def main():
             logger.warning("   Run check_scout_health() for detailed diagnostics.")
             logger.warning("")
             if not drush_details.get("drush_found"):
-                logger.warning("   💡 Quick fix: Add to config.json:")
-                logger.warning('      "drush_command": "ddev drush"')
+                # Get config file location for AI to know where to edit
+                config_path = Path.home() / ".config" / "drupal-scout" / "config.json"
+                local_config = Path("config.json")
+
+                if config_path.exists():
+                    config_file = str(config_path)
+                elif local_config.exists():
+                    config_file = str(local_config.absolute())
+                else:
+                    config_file = str(config_path)
+
+                logger.warning("   💡 QUICK FIX FOR AI ASSISTANT:")
+                logger.warning(f"   Edit config file: {config_file}")
+                logger.warning('   Add this JSON property: "drush_command": "ddev drush"')
+                logger.warning("   (Use 'ddev drush' for DDEV, 'lando drush' for Lando, etc.)")
             logger.warning("")
     except Exception as e:
         logger.warning(f"⚠️  Could not test drush: {e}")
