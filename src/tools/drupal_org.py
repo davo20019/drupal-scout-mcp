@@ -14,7 +14,6 @@ These tools help discover new modules and troubleshoot existing ones.
 import datetime
 import logging
 import re
-from typing import Optional
 
 # Import from core modules
 from src.core.config import (
