@@ -19,18 +19,20 @@ from pathlib import Path
 from typing import Optional, List, Dict
 
 from src.tools.security.models import SecurityFinding
+from src.tools.security.filters import _is_false_positive
 
 logger = logging.getLogger(__name__)
 
 # Try to import tree-sitter for AST-based analysis (optional)
 try:
-    from tree_sitter import Language, Parser
+    from tree_sitter import Language, Parser, Query
     import tree_sitter_php
 
     HAS_TREE_SITTER = True
     logger.info("✅ tree-sitter-php available - enhanced security scanning enabled")
 except ImportError:
     HAS_TREE_SITTER = False
+    Query = None  # type: ignore
     logger.info("ℹ️  tree-sitter-php not installed - using pattern-based scanning")
 
 
@@ -75,7 +77,8 @@ def _has_sql_concatenation_ast(file_path: Path, line_num: int) -> bool:
 
         # Query for actual SQL query construction
         # Look for string concatenation in db_query, mysqli_query, etc.
-        query = language.query(
+        query = Query(
+            language,
             """
             (function_call_expression
               function: (name) @func_name
@@ -156,7 +159,8 @@ def _has_unsafe_echo_ast(file_path: Path, line_num: int) -> bool:
         tree = parser.parse(code)
 
         # Query for echo/print statements
-        query = language.query(
+        query = Query(
+            language,
             """
             (echo_statement
               (variable) @var
