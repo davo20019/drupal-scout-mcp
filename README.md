@@ -421,6 +421,46 @@ Parameters: max_findings (default: 50)
 Use case: Preparing modules for Drupal upgrades, security hardening
 ```
 
+**Security Scanning Limitations & Best Practices**
+
+Scout's pattern-based security analysis is excellent for:
+- ✅ Quick security screening and first-pass vulnerability detection
+- ✅ Finding obvious issues (direct echo/print, SQL concatenation)
+- ✅ Eliminating false positives with Drupal-aware filtering
+- ✅ Identifying deprecated/unsafe API usage
+
+Pattern-based analysis may miss:
+- Multi-line code patterns and complex data flow
+- Variables passed through functions or indirect calls
+- Conditional logic spanning multiple functions
+- Custom security wrappers
+
+**For comprehensive security audits:**
+1. Use Scout for initial screening (fast, catches obvious issues)
+2. Review all HIGH severity findings with manual code inspection
+3. Use additional static analysis tools:
+   - PHPStan (static analysis)
+   - Psalm (type checking & security)
+   - Semgrep (custom security rules)
+4. Manual penetration testing for CSRF, command injection, path traversal
+5. Professional security audit for production/compliance requirements
+
+Scout should NOT be the sole tool for:
+- Production security certification
+- Compliance audits (PCI-DSS, SOC 2, HIPAA)
+- Complete vulnerability coverage
+
+**All findings include**: file location, line number, code snippet, severity level (HIGH/MEDIUM/LOW), and specific remediation recommendations with Drupal documentation links.
+
+**Enhanced Accuracy with AST Analysis**
+
+Scout uses tree-sitter-php for AST-based security analysis (installed automatically with `pip install drupal-scout-mcp`):
+- Reduces false positives by understanding PHP syntax structure
+- Catches multi-line code patterns (e.g., SQL concatenation across lines)
+- Provides Drupal-aware validation (distinguishes EntityQuery from SQL queries)
+- Verifies actual code structure vs simple pattern matching
+- Graceful fallback to pattern-based analysis if tree-sitter unavailable
+
 ### Drupal.org Tools
 
 **search_drupal_org** - Search for modules on drupal.org

@@ -26,6 +26,17 @@ from server import mcp
 
 logger = logging.getLogger(__name__)
 
+# Try to import tree-sitter for AST-based analysis (optional)
+try:
+    from tree_sitter import Language, Parser
+    import tree_sitter_php
+
+    HAS_TREE_SITTER = True
+    logger.info("✅ tree-sitter-php available - enhanced security scanning enabled")
+except ImportError:
+    HAS_TREE_SITTER = False
+    logger.info("ℹ️  tree-sitter-php not installed - using pattern-based scanning")
+
 
 @dataclass
 class SecurityFinding:
@@ -52,12 +63,12 @@ XSS_PATTERNS = {
         "description": "Direct output of variable without escaping",
         "recommendation": "Use \\Drupal\\Component\\Utility\\Html::escape() or render arrays with #markup",
     },
-    # Render array without #markup or #plain_text
+    # Direct variable in render array key (potential XSS)
     "unsafe_render_string": {
-        "pattern": r"['\"](#|return\s+\[)['\"]#[\w_]+['\"]\s*=>\s*\$[\w_]+(?!\s*[,\]])|return\s+\$[\w_]+\s*;",
+        "pattern": r"['\"](#[\w_]+)['\"]:\s*\$[\w_]+(?!\s*[,\]])",
         "severity": "medium",
-        "description": "Variable returned/assigned without safe render context",
-        "recommendation": "Wrap in ['#markup' => Xss::filterAdmin()] or use #plain_text",
+        "description": "Variable assigned to render array without explicit sanitization",
+        "recommendation": "Use #markup with Xss::filterAdmin() or #plain_text for user content",
     },
     # drupal_set_message with variable (Drupal 7/8 style)
     "drupal_set_message_var": {
@@ -95,16 +106,16 @@ SQL_INJECTION_PATTERNS = {
         "description": "db_query() with string concatenation or direct superglobals",
         "recommendation": "Use placeholders: db_query('SELECT * FROM {table} WHERE id = :id', [':id' => $id])",
     },
-    # Direct SQL with concatenation
+    # Direct SQL with concatenation in string context
     "sql_concat": {
-        "pattern": r"(SELECT|INSERT|UPDATE|DELETE).*['\"]?\s*\.\s*\$",
+        "pattern": r"['\"](\s*SELECT\s+|\s*INSERT\s+INTO\s+|\s*UPDATE\s+|\s*DELETE\s+FROM\s+).*['\"]?\s*\.\s*\$",
         "severity": "high",
-        "description": "SQL query with string concatenation",
+        "description": "SQL query string with variable concatenation",
         "recommendation": "Use Drupal's Database API with placeholders",
     },
     # mysqli/PDO without prepared statements
     "mysqli_query_concat": {
-        "pattern": r"(mysqli_query|mysql_query|->query)\([^)]*\.\s*\$",
+        "pattern": r"(mysqli_query|mysql_query|->query)\([^)]*['\"].*\.\s*\$",
         "severity": "high",
         "description": "Direct database query with concatenation",
         "recommendation": "Use prepared statements or Drupal's Database API",
@@ -219,11 +230,268 @@ def _find_module_path(module_name: str) -> Optional[Path]:
     return find_path(module_name)
 
 
+def _is_false_positive(line: str, pattern_name: str, category: str) -> bool:
+    """
+    Check if a finding is likely a false positive based on context.
+
+    Args:
+        line: The line of code that matched
+        pattern_name: Name of the pattern that matched
+        category: Category of the finding
+
+    Returns:
+        True if this is likely a false positive
+    """
+    line_lower = line.lower()
+
+    # SQL injection false positives
+    if category == "sql_injection":
+        # Drupal's safe APIs that look like SQL
+        safe_drupal_apis = [
+            "->condition(",  # EntityQuery conditions are safe
+            "->fields(",  # EntityQuery field selection
+            "->range(",  # EntityQuery range
+            "->sort(",  # EntityQuery sorting
+            "gettempstore(",  # Temp storage is not SQL
+            "getprivatetempstore(",  # Private temp storage
+            "getsharedtempstore(",  # Shared temp storage
+            "->get(",  # KeyValue store get
+            "->set(",  # KeyValue store set
+            "->delete(",  # KeyValue store delete (not SQL DELETE)
+            "cache_get(",  # Cache API
+            "cache_set(",  # Cache API
+            "state_get(",  # State API
+            "config_get(",  # Config API
+        ]
+
+        for safe_api in safe_drupal_apis:
+            if safe_api in line_lower:
+                return True
+
+        # Check if SQL keywords are in comments or strings only (not actual SQL)
+        if pattern_name == "sql_concat":
+            # If the line contains SQL keywords but no actual query construction
+            # Look for non-SQL contexts like variable names containing "select"
+            if not any(keyword in line_lower for keyword in ["db_query", "->query(", "mysqli", "pdo"]):
+                # Likely a false positive if no database functions present
+                return True
+
+    # Access control false positives
+    if category == "access_control":
+        # ->save() and ->delete() on non-entity objects
+        if pattern_name == "missing_permission_check":
+            # Config and cache operations are not entity operations
+            if any(
+                keyword in line_lower
+                for keyword in ["config->save(", "cache->delete(", "state->delete("]
+            ):
+                return True
+
+    # XSS false positives
+    if category == "xss":
+        # drupal_set_message with t() is safe
+        if "drupal_set_message" in line_lower and "t(" in line_lower:
+            return True
+
+        # Form returns are safe (Form API handles sanitization)
+        if pattern_name == "unsafe_render_string":
+            # return $form; is safe - Form API sanitizes
+            if "return $form" in line_lower:
+                return True
+
+            # return $build; is safe - render arrays are sanitized
+            if "return $build" in line_lower:
+                return True
+
+            # return $element; is safe in form context
+            if "return $element" in line_lower:
+                return True
+
+            # return $requirements; is safe (system requirements)
+            if "return $requirements" in line_lower:
+                return True
+
+            # return $items; is safe in field formatter context
+            if "return $items" in line_lower:
+                return True
+
+            # return $variables; is safe in preprocess hooks
+            if "return $variables" in line_lower:
+                return True
+
+            # return $output; when it's a render array variable
+            if "return $output" in line_lower:
+                return True
+
+            # return $page; is safe (page render array)
+            if "return $page" in line_lower:
+                return True
+
+            # return $entity; in load/create contexts is not XSS
+            if "return $entity" in line_lower:
+                return True
+
+    return False
+
+
+# ============================================================================
+# AST-BASED ANALYSIS (DRUPAL-AWARE) - Optional Enhancement
+# ============================================================================
+
+
+def _init_php_parser():
+    """Initialize PHP parser with tree-sitter (if available)."""
+    if not HAS_TREE_SITTER:
+        return None
+
+    try:
+        PHP_LANGUAGE = Language(tree_sitter_php.language())
+        parser = Parser(PHP_LANGUAGE)
+        return parser, PHP_LANGUAGE
+    except Exception as e:
+        logger.error(f"Failed to initialize tree-sitter parser: {e}")
+        return None
+
+
+def _has_sql_concatenation_ast(file_path: Path, line_num: int) -> bool:
+    """
+    Use AST to verify if a line actually contains SQL concatenation.
+
+    Drupal-aware: Understands EntityQuery, TempStore, Config, etc.
+
+    Returns:
+        True if real SQL concatenation detected, False if safe Drupal API
+    """
+    if not HAS_TREE_SITTER:
+        return True  # Can't verify, assume pattern is correct
+
+    try:
+        parser_info = _init_php_parser()
+        if not parser_info:
+            return True
+
+        parser, language = parser_info
+
+        # Read file and parse
+        with open(file_path, "rb") as f:
+            code = f.read()
+
+        tree = parser.parse(code)
+
+        # Query for actual SQL query construction
+        # Look for string concatenation in db_query, mysqli_query, etc.
+        query = language.query(
+            """
+            (function_call_expression
+              function: (name) @func_name
+              arguments: (arguments
+                (binary_expression
+                  operator: "."
+                ) @concat
+              )
+            )
+            """
+        )
+
+        captures = query.captures(tree.root_node)
+
+        for node, capture_name in captures:
+            if capture_name == "func_name":
+                func_name = code[node.start_byte : node.end_byte].decode("utf-8").lower()
+
+                # Check if it's a real database function
+                sql_functions = ["db_query", "mysqli_query", "mysql_query", "pdo"]
+
+                if any(sql_func in func_name for sql_func in sql_functions):
+                    # Found actual SQL function with concatenation
+                    node_line = node.start_point[0] + 1
+                    if abs(node_line - line_num) <= 2:  # Within 2 lines
+                        return True
+
+        # Drupal safe APIs - even if pattern matched
+        safe_drupal_patterns = [
+            b"->condition(",
+            b"->getTempStore(",
+            b"->getPrivateTempStore(",
+            b"->get(",
+            b"->set(",
+            b"cache_",
+            b"state_",
+            b"config_",
+        ]
+
+        # Check if line contains safe Drupal APIs
+        lines = code.split(b"\n")
+        if line_num <= len(lines):
+            line_code = lines[line_num - 1]
+            for safe_pattern in safe_drupal_patterns:
+                if safe_pattern in line_code.lower():
+                    return False  # Safe Drupal API
+
+        return False  # No SQL concatenation found
+
+    except Exception as e:
+        logger.debug(f"AST analysis failed, falling back to pattern: {e}")
+        return True  # Fall back to pattern matching
+
+
+def _has_unsafe_echo_ast(file_path: Path, line_num: int) -> bool:
+    """
+    Use AST to verify if echo/print is actually unsafe.
+
+    Drupal-aware: Distinguishes between render arrays and direct output.
+
+    Returns:
+        True if unsafe direct output, False if safe pattern
+    """
+    if not HAS_TREE_SITTER:
+        return True  # Can't verify, assume pattern is correct
+
+    try:
+        parser_info = _init_php_parser()
+        if not parser_info:
+            return True
+
+        parser, language = parser_info
+
+        # Read file and parse
+        with open(file_path, "rb") as f:
+            code = f.read()
+
+        tree = parser.parse(code)
+
+        # Query for echo/print statements
+        query = language.query(
+            """
+            (echo_statement
+              (variable) @var
+            )
+            (print_intrinsic
+              (variable) @var
+            )
+            """
+        )
+
+        captures = query.captures(tree.root_node)
+
+        for node, capture_name in captures:
+            node_line = node.start_point[0] + 1
+            if abs(node_line - line_num) <= 1:
+                # Found echo/print with variable - this is the real deal
+                return True
+
+        return False  # No unsafe echo found
+
+    except Exception as e:
+        logger.debug(f"AST analysis failed, falling back to pattern: {e}")
+        return True
+
+
 def _scan_file_for_patterns(
     file_path: Path, patterns: Dict[str, Dict], category: str
 ) -> List[SecurityFinding]:
     """
-    Scan a file for security patterns.
+    Scan a file for security patterns with false positive filtering.
 
     Args:
         file_path: Path to file to scan
@@ -231,7 +499,7 @@ def _scan_file_for_patterns(
         category: Category name (e.g., "xss", "sql_injection")
 
     Returns:
-        List of SecurityFinding objects
+        List of SecurityFinding objects (filtered for false positives)
     """
     findings = []
 
@@ -243,17 +511,30 @@ def _scan_file_for_patterns(
             for pattern_name, pattern_info in patterns.items():
                 pattern = pattern_info["pattern"]
                 if re.search(pattern, line, re.IGNORECASE):
-                    findings.append(
-                        SecurityFinding(
-                            severity=pattern_info["severity"],
-                            category=category,
-                            file=str(file_path),
-                            line=line_num,
-                            code=line.strip(),
-                            description=pattern_info["description"],
-                            recommendation=pattern_info["recommendation"],
-                        )
-                    )
+                    # Check for false positives before adding
+                    if not _is_false_positive(line, pattern_name, category):
+                        # AST validation (if available) - Drupal-aware
+                        validated = True
+                        if HAS_TREE_SITTER:
+                            if category == "sql_injection" and pattern_name == "sql_concat":
+                                # Use AST to verify actual SQL concatenation
+                                validated = _has_sql_concatenation_ast(file_path, line_num)
+                            elif category == "xss" and pattern_name == "unescaped_print":
+                                # Use AST to verify unsafe echo/print
+                                validated = _has_unsafe_echo_ast(file_path, line_num)
+
+                        if validated:
+                            findings.append(
+                                SecurityFinding(
+                                    severity=pattern_info["severity"],
+                                    category=category,
+                                    file=str(file_path),
+                                    line=line_num,
+                                    code=line.strip(),
+                                    description=pattern_info["description"],
+                                    recommendation=pattern_info["recommendation"],
+                                )
+                            )
 
     except Exception as e:
         logger.error(f"Error scanning file {file_path}: {e}")
@@ -337,12 +618,15 @@ def scan_xss(module_name: str, module_path: Optional[str] = None, max_findings: 
     """
     Scan a Drupal module for Cross-Site Scripting (XSS) vulnerabilities.
 
-    Uses pattern-based detection to find common XSS vectors:
+    Uses pattern-based detection (optionally enhanced with AST analysis):
     - Unescaped print/echo statements
     - Unsafe render arrays
     - Direct superglobal output
     - JavaScript innerHTML usage
     - drupal_set_message with variables
+
+    Analysis method: AST-based validation (tree-sitter) + Pattern matching + Drupal-aware filtering
+    Provides enhanced accuracy with understanding of PHP syntax and Drupal APIs
 
     This tool does NOT use AI - all findings are concrete code patterns.
 
@@ -397,9 +681,16 @@ def scan_xss(module_name: str, module_path: Optional[str] = None, max_findings: 
         if len(all_findings) > max_findings:
             output.append("")
             output.append(f"💡 Use scan_xss('{module_name}', max_findings=100) to see more findings")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: Pattern-based analysis may miss:")
+        output.append("   - Multi-line code patterns and complex data flow")
+        output.append("   - Variables passed through functions")
+        output.append("   - For production audits, also use manual review + PHPStan/Psalm")
     else:
         output.append("✅ No XSS vulnerabilities detected using common patterns.")
-        output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
+        output.append("")
+        output.append("⚠️  Note: Pattern-based detection has limitations.")
+        output.append("   Always perform manual security review for critical code.")
 
     return "\n".join(output)
 
@@ -464,6 +755,9 @@ def scan_sql_injection(module_name: str, module_path: Optional[str] = None, max_
         output.append("📚 RESOURCES:")
         output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
         output.append("  • https://www.drupal.org/docs/drupal-apis/database-api")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: May miss multi-line concatenation and complex data flow.")
+        output.append("   For production audits, use manual review + static analysis tools.")
     else:
         output.append("✅ No SQL injection vulnerabilities detected using common patterns.")
         output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
@@ -531,6 +825,9 @@ def scan_access_control(module_name: str, module_path: Optional[str] = None, max
         output.append("📚 RESOURCES:")
         output.append("  • https://www.drupal.org/docs/drupal-apis/access-api")
         output.append("  • https://www.drupal.org/docs/drupal-apis/routing-system")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: Cannot detect access checks across multiple functions.")
+        output.append("   Manual review recommended for complex permission logic.")
     else:
         output.append("✅ No access control issues detected using common patterns.")
         output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
@@ -599,6 +896,9 @@ def scan_deprecated_api(module_name: str, module_path: Optional[str] = None, max
         output.append("📚 RESOURCES:")
         output.append("  • https://www.drupal.org/docs/drupal-apis/api-change-records")
         output.append("  • https://www.php.net/manual/en/migration80.deprecated.php")
+        output.append("")
+        output.append("⚠️  LIMITATIONS: Detects known patterns only.")
+        output.append("   May miss custom wrappers or indirect usage.")
     else:
         output.append("✅ No deprecated or unsafe API usage detected using common patterns.")
         output.append("   Note: This is pattern-based detection. Manual review is still recommended.")
@@ -844,7 +1144,19 @@ def security_audit(
         output.append("")
 
     # Recommendations
-    output.append("📚 RESOURCES")
+    output.append("📚 NEXT STEPS")
+    output.append("")
+    output.append("For comprehensive security audits:")
+    output.append("  1. Review HIGH severity findings immediately")
+    output.append("  2. Manual code review for critical paths")
+    output.append("  3. Use additional tools: PHPStan, Psalm, Semgrep")
+    output.append("  4. Consider professional security audit for production")
+    output.append("")
+    output.append("⚠️  IMPORTANT: Pattern-based analysis has limitations.")
+    output.append("   May miss: multi-line patterns, complex data flow, indirect calls.")
+    output.append("   Scout is excellent for first-pass screening, not security certification.")
+    output.append("")
+    output.append("Resources:")
     output.append("  • https://www.drupal.org/docs/security-in-drupal/writing-secure-code")
     output.append("  • https://www.drupal.org/security-team")
 

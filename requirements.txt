@@ -1,3 +1,7 @@
 fastmcp>=0.2.0
 pyyaml>=6.0
 pytest>=7.0.0
+
+# For enhanced security scanning accuracy with AST-based analysis
+tree-sitter>=0.21.0
+tree-sitter-php>=0.23.0
