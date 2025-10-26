@@ -1444,7 +1444,7 @@ Scout will attempt to auto-detect drush, but this may fail in MCP environments.
 
 ### Drush Configuration (Important!)
 
-**11 out of 23 tools require drush** to access the Drupal database:
+**11 out of 47 tools require drush** to access the Drupal database:
 - `get_taxonomy_info()` - Taxonomy usage analysis
 - `get_entity_structure()` - Entity/bundle information
 - `get_field_info()` - Field configurations
