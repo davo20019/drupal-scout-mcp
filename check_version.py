@@ -88,6 +88,14 @@ if total_tools < 23:
         print(f"    - Same as server.mcp? {src.tools.entities.mcp is server.mcp}")
     except Exception as e:
         print(f"  ✗ src.tools.entities failed: {e}")
+
+    try:
+        import src.tools.taxonomy
+        print("  ✓ src.tools.taxonomy imported")
+        print(f"    - taxonomy.mcp ID: {id(src.tools.taxonomy.mcp)}")
+        print(f"    - Same as server.mcp? {src.tools.taxonomy.mcp is server.mcp}")
+    except Exception as e:
+        print(f"  ✗ src.tools.taxonomy failed: {e}")
 else:
     print("✅ All 23 tools loaded successfully!")
 
@@ -101,6 +109,7 @@ drupal_org_tools = ['search_drupal_org', 'get_popular_drupal_modules', 'get_modu
 system_tools = ['get_watchdog_logs', 'check_scout_health']
 export_tools = ['export_taxonomy_usage_to_csv', 'export_nodes_to_csv', 'export_users_to_csv']
 entity_tools = ['get_entity_structure', 'get_field_info']
+taxonomy_tools = ['get_taxonomy_info', 'get_all_taxonomy_usage']
 
 tools = sorted(server.mcp._tool_manager._tools.keys())
 
@@ -108,13 +117,15 @@ drupal_org_count = sum(1 for t in tools if t in drupal_org_tools)
 system_count = sum(1 for t in tools if t in system_tools)
 export_count = sum(1 for t in tools if t in export_tools)
 entity_count = sum(1 for t in tools if t in entity_tools)
-server_count = total_tools - drupal_org_count - system_count - export_count - entity_count
+taxonomy_count = sum(1 for t in tools if t in taxonomy_tools)
+server_count = total_tools - drupal_org_count - system_count - export_count - entity_count - taxonomy_count
 
-print(f"  server.py: {server_count}/11 tools")
+print(f"  server.py: {server_count}/9 tools")
 print(f"  drupal_org.py: {drupal_org_count}/5 tools")
 print(f"  system.py: {system_count}/2 tools")
 print(f"  exports.py: {export_count}/3 tools")
 print(f"  entities.py: {entity_count}/2 tools")
+print(f"  taxonomy.py: {taxonomy_count}/2 tools")
 
 if drupal_org_count < 5:
     print("\n❌ Missing drupal_org tools:")
@@ -137,6 +148,12 @@ if export_count < 3:
 if entity_count < 2:
     print("\n❌ Missing entity tools:")
     for t in entity_tools:
+        if t not in tools:
+            print(f"  - {t}")
+
+if taxonomy_count < 2:
+    print("\n❌ Missing taxonomy tools:")
+    for t in taxonomy_tools:
         if t not in tools:
             print(f"  - {t}")
 
