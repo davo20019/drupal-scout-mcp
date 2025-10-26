@@ -18,19 +18,31 @@ from typing import Optional, List
 # Get logger
 logger = logging.getLogger(__name__)
 
+
 # Import the MCP instance and helper functions from server
 # This creates a circular import, but Python handles it fine since we're just
 # importing the mcp instance, not calling anything at import time
 def get_server_dependencies():
     """Lazy import to avoid circular dependency issues."""
-    from server import mcp, load_config, verify_database_connection, get_drush_command, run_drush_command
+    from server import (
+        mcp,
+        load_config,
+        verify_database_connection,
+        get_drush_command,
+        run_drush_command,
+    )
+
     return mcp, load_config, verify_database_connection, get_drush_command, run_drush_command
 
+
 # Get dependencies
-mcp, load_config, verify_database_connection, get_drush_command, run_drush_command = get_server_dependencies()
+mcp, load_config, verify_database_connection, get_drush_command, run_drush_command = (
+    get_server_dependencies()
+)
 
 # Note: This file contains export tools extracted from server.py
 # Import order: server.py creates mcp instance → this file imports it and registers tools
+
 
 @mcp.tool()
 def export_taxonomy_usage_to_csv(
@@ -116,18 +128,22 @@ def export_taxonomy_usage_to_csv(
         drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
-            return json.dumps({
-                "_error": True,
-                "message": "Could not determine Drupal root. Check drupal_root in config.",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "Could not determine Drupal root. Check drupal_root in config.",
+                }
+            )
 
         # Verify database connection first
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
-            return json.dumps({
-                "_error": True,
-                "message": f"Database connection required. {db_msg}",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": f"Database connection required. {db_msg}",
+                }
+            )
 
         # Auto-generate path if not provided
         if not output_path:
@@ -152,11 +168,13 @@ def export_taxonomy_usage_to_csv(
         )
 
         if not terms:
-            return json.dumps({
-                "_error": True,
-                "message": f"Could not fetch terms for vocabulary '{vocabulary}'",
-                "suggestion": "Verify vocabulary machine name is correct.",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": f"Could not fetch terms for vocabulary '{vocabulary}'",
+                    "suggestion": "Verify vocabulary machine name is correct.",
+                }
+            )
 
         total_terms = len(terms)
 
@@ -181,13 +199,13 @@ def export_taxonomy_usage_to_csv(
                 "code_usage",
                 "config_usage",
                 "safe_to_delete",
-                "warnings"
+                "warnings",
             ]
 
         # Write CSV
         logger.info(f"Writing {total_terms} terms to {output_path}...")
         with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction='ignore')
+            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
 
             for term in terms:
@@ -200,8 +218,10 @@ def export_taxonomy_usage_to_csv(
                         # Get sample nodes from content_usage array
                         content_usage = term.get("content_usage", [])
                         if content_usage:
-                            samples = [f"nid:{item.get('nid')} ({item.get('title', 'Untitled')})"
-                                     for item in content_usage[:5]]
+                            samples = [
+                                f"nid:{item.get('nid')} ({item.get('title', 'Untitled')})"
+                                for item in content_usage[:5]
+                            ]
                             value = " | ".join(samples)
                         else:
                             value = ""
@@ -214,8 +234,10 @@ def export_taxonomy_usage_to_csv(
                         # Format code references
                         code_usage = term.get("code_usage", [])
                         if code_usage:
-                            refs = [f"{item.get('file', '')}:{item.get('line', '')}"
-                                   for item in code_usage]
+                            refs = [
+                                f"{item.get('file', '')}:{item.get('line', '')}"
+                                for item in code_usage
+                            ]
                             value = " | ".join(refs)
                         else:
                             value = ""
@@ -224,8 +246,10 @@ def export_taxonomy_usage_to_csv(
                         # Format config references
                         config_usage = term.get("config_usage", [])
                         if config_usage:
-                            refs = [f"{item.get('config_name', '')} ({item.get('config_type', '')})"
-                                   for item in config_usage]
+                            refs = [
+                                f"{item.get('config_name', '')} ({item.get('config_type', '')})"
+                                for item in config_usage
+                            ]
                             value = " | ".join(refs)
                         else:
                             value = ""
@@ -257,7 +281,7 @@ def export_taxonomy_usage_to_csv(
             "file_size_kb": file_size_kb,
             "columns": columns,
             "preview": preview,
-            "message": f"✅ Successfully exported {total_terms} terms to {output_path} ({file_size_kb} KB)"
+            "message": f"✅ Successfully exported {total_terms} terms to {output_path} ({file_size_kb} KB)",
         }
 
         return json.dumps(result, indent=2)
@@ -395,18 +419,22 @@ def export_nodes_to_csv(
         drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
-            return json.dumps({
-                "_error": True,
-                "message": "Could not determine Drupal root. Check drupal_root in config.",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "Could not determine Drupal root. Check drupal_root in config.",
+                }
+            )
 
         # Verify database connection
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
-            return json.dumps({
-                "_error": True,
-                "message": f"Database connection required. {db_msg}",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": f"Database connection required. {db_msg}",
+                }
+            )
 
         # Auto-generate path if not provided
         if not output_path:
@@ -419,7 +447,9 @@ def export_nodes_to_csv(
         output_file.parent.mkdir(parents=True, exist_ok=True)
 
         # Get all nodes via drush
-        logger.info(f"Fetching nodes{' for content type: ' + content_type if content_type else ''}...")
+        logger.info(
+            f"Fetching nodes{' for content type: ' + content_type if content_type else ''}..."
+        )
         nodes = _get_all_nodes_from_drush(
             drupal_root=drupal_root,
             content_type=content_type,
@@ -430,11 +460,13 @@ def export_nodes_to_csv(
         )
 
         if nodes is None:
-            return json.dumps({
-                "_error": True,
-                "message": "Failed to fetch nodes from Drupal. Check server logs for details.",
-                "suggestion": "Verify drush is working: drush status"
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "Failed to fetch nodes from Drupal. Check server logs for details.",
+                    "suggestion": "Verify drush is working: drush status",
+                }
+            )
 
         if not nodes or len(nodes) == 0:
             debug_info = {
@@ -443,9 +475,9 @@ def export_nodes_to_csv(
                 "filters_applied": {
                     "content_type": content_type or "all",
                     "include_unpublished": include_unpublished,
-                    "limit": limit if limit > 0 else "no limit"
+                    "limit": limit if limit > 0 else "no limit",
                 },
-                "suggestion": "Try running: drush ev \"echo count(\\\\Drupal::entityQuery('node')->accessCheck(FALSE)->execute());\" to verify nodes exist"
+                "suggestion": "Try running: drush ev \"echo count(\\\\Drupal::entityQuery('node')->accessCheck(FALSE)->execute());\" to verify nodes exist",
             }
             return json.dumps(debug_info)
 
@@ -458,13 +490,29 @@ def export_nodes_to_csv(
         else:
             # Base columns
             columns = [
-                "nid", "uuid", "title", "type", "status", "langcode",
-                "created", "changed", "author", "author_uid",
-                "url_alias", "canonical_url", "redirects",
-                "taxonomy_terms", "entity_references",
-                "metatag_title", "metatag_description", "metatag_keywords",
-                "revision_count", "latest_revision_log",
-                "promote", "sticky", "front_page"
+                "nid",
+                "uuid",
+                "title",
+                "type",
+                "status",
+                "langcode",
+                "created",
+                "changed",
+                "author",
+                "author_uid",
+                "url_alias",
+                "canonical_url",
+                "redirects",
+                "taxonomy_terms",
+                "entity_references",
+                "metatag_title",
+                "metatag_description",
+                "metatag_keywords",
+                "revision_count",
+                "latest_revision_log",
+                "promote",
+                "sticky",
+                "front_page",
             ]
 
             # Add field data columns if requested
@@ -476,7 +524,18 @@ def export_nodes_to_csv(
                 for node in nodes:
                     for key in node.keys():
                         # Add fields that aren't in base columns
-                        if key not in columns and key not in ['nid', 'uuid', 'vid', 'type', 'langcode', 'title', 'uid', 'status', 'created', 'changed']:
+                        if key not in columns and key not in [
+                            "nid",
+                            "uuid",
+                            "vid",
+                            "type",
+                            "langcode",
+                            "title",
+                            "uid",
+                            "status",
+                            "created",
+                            "changed",
+                        ]:
                             custom_fields.add(key)
 
                 # Add custom fields to columns (sorted for consistency)
@@ -485,7 +544,7 @@ def export_nodes_to_csv(
         # Write CSV
         logger.info(f"Writing {total_nodes} nodes to {output_path}...")
         with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction='ignore')
+            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
 
             for node in nodes:
@@ -525,7 +584,7 @@ def export_nodes_to_csv(
             "file_size_kb": file_size_kb,
             "columns": columns,
             "preview": preview,
-            "message": f"✅ Successfully exported {total_nodes} nodes to {output_path} ({file_size_kb} KB)"
+            "message": f"✅ Successfully exported {total_nodes} nodes to {output_path} ({file_size_kb} KB)",
         }
 
         return json.dumps(result, indent=2)
@@ -641,18 +700,22 @@ def export_users_to_csv(
         drupal_root = Path(config.get("drupal_root", ""))
 
         if not drupal_root.exists():
-            return json.dumps({
-                "_error": True,
-                "message": "Could not determine Drupal root. Check drupal_root in config.",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "Could not determine Drupal root. Check drupal_root in config.",
+                }
+            )
 
         # Verify database connection
         db_ok, db_msg = verify_database_connection()
         if not db_ok:
-            return json.dumps({
-                "_error": True,
-                "message": f"Database connection required. {db_msg}",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": f"Database connection required. {db_msg}",
+                }
+            )
 
         # Auto-generate path if not provided
         if not output_path:
@@ -674,11 +737,13 @@ def export_users_to_csv(
         )
 
         if users is None:
-            return json.dumps({
-                "_error": True,
-                "message": "Failed to fetch users from Drupal. Check server logs for details.",
-                "suggestion": "Verify drush is working: drush status"
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "Failed to fetch users from Drupal. Check server logs for details.",
+                    "suggestion": "Verify drush is working: drush status",
+                }
+            )
 
         if not users or len(users) == 0:
             debug_info = {
@@ -686,9 +751,9 @@ def export_users_to_csv(
                 "message": "No users found",
                 "filters_applied": {
                     "include_blocked": include_blocked,
-                    "limit": limit if limit > 0 else "no limit"
+                    "limit": limit if limit > 0 else "no limit",
                 },
-                "suggestion": "Try running: drush ev \"echo count(\\\\Drupal::entityQuery('user')->accessCheck(FALSE)->execute());\" to verify users exist"
+                "suggestion": "Try running: drush ev \"echo count(\\\\Drupal::entityQuery('user')->accessCheck(FALSE)->execute());\" to verify users exist",
             }
             return json.dumps(debug_info)
 
@@ -698,7 +763,9 @@ def export_users_to_csv(
         all_roles = set()
         for user in users:
             if user.get("roles"):
-                roles = user["roles"].split(" | ") if isinstance(user["roles"], str) else user["roles"]
+                roles = (
+                    user["roles"].split(" | ") if isinstance(user["roles"], str) else user["roles"]
+                )
                 all_roles.update(roles)
         roles_list = sorted(list(all_roles))
 
@@ -708,10 +775,21 @@ def export_users_to_csv(
         else:
             # Base columns
             columns = [
-                "uid", "uuid", "name", "email", "status", "langcode",
-                "created", "changed", "access", "login",
-                "roles", "timezone", "preferred_langcode", "init",
-                "picture"
+                "uid",
+                "uuid",
+                "name",
+                "email",
+                "status",
+                "langcode",
+                "created",
+                "changed",
+                "access",
+                "login",
+                "roles",
+                "timezone",
+                "preferred_langcode",
+                "init",
+                "picture",
             ]
 
             # Add field data columns if requested
@@ -721,7 +799,21 @@ def export_users_to_csv(
                 for user in users:
                     for key in user.keys():
                         # Add fields that aren't in base columns
-                        if key not in columns and key not in ['uid', 'uuid', 'name', 'mail', 'status', 'langcode', 'created', 'changed', 'access', 'login', 'init', 'timezone', 'preferred_langcode']:
+                        if key not in columns and key not in [
+                            "uid",
+                            "uuid",
+                            "name",
+                            "mail",
+                            "status",
+                            "langcode",
+                            "created",
+                            "changed",
+                            "access",
+                            "login",
+                            "init",
+                            "timezone",
+                            "preferred_langcode",
+                        ]:
                             custom_fields.add(key)
 
                 # Add custom fields to columns (sorted for consistency)
@@ -730,7 +822,7 @@ def export_users_to_csv(
         # Write CSV
         logger.info(f"Writing {total_users} users to {output_path}...")
         with open(output_path, "w", newline="", encoding="utf-8") as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction='ignore')
+            writer = csv.DictWriter(csvfile, fieldnames=columns, extrasaction="ignore")
             writer.writeheader()
 
             for user in users:
@@ -747,7 +839,9 @@ def export_users_to_csv(
                         value = "YES" if value else "NO"
 
                     # Format timestamps
-                    elif col in ["created", "changed", "access", "login"] and isinstance(value, (int, float)):
+                    elif col in ["created", "changed", "access", "login"] and isinstance(
+                        value, (int, float)
+                    ):
                         if value > 0:
                             value = datetime.fromtimestamp(value).strftime("%Y-%m-%d %H:%M:%S")
                         else:
@@ -773,7 +867,7 @@ def export_users_to_csv(
             "file_size_kb": file_size_kb,
             "columns": columns,
             "preview": preview,
-            "message": f"✅ Successfully exported {total_users} users to {output_path} ({file_size_kb} KB)"
+            "message": f"✅ Successfully exported {total_users} users to {output_path} ({file_size_kb} KB)",
         }
 
         return json.dumps(result, indent=2)
@@ -1713,5 +1807,3 @@ def _get_term_usage_from_files(term_id: int, drupal_root: Path) -> Optional[dict
         "but this is not implemented. Database access via drush is required."
     )
     return None
-
-
