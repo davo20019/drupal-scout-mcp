@@ -4,18 +4,20 @@ System health and logging tools.
 Provides tools for system diagnostics and error analysis:
 - get_watchdog_logs: Get Drupal watchdog logs for debugging
 - check_scout_health: Verify Scout's database connectivity and health
+- get_available_updates: Get report of available updates for Drupal core and contrib modules
 
 These tools help monitor and troubleshoot the Drupal site.
 """
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Optional
 
 # Import from core modules
 from src.core.config import ensure_indexed, get_config, get_indexer
 from src.core.database import check_module_enabled
-from src.core.drush import run_drush_command
+from src.core.drush import run_drush_command, get_drush_command, _setup_drush_environment
 
 # Import MCP instance from server
 from server import mcp
@@ -445,5 +447,352 @@ def check_scout_health() -> str:
         output.append("  • Database-dependent features")
         output.append("  • Accurate taxonomy usage analysis")
         output.append("  • Live configuration queries")
+
+    return "\n".join(output)
+
+
+@mcp.tool()
+def get_available_updates(include_dev: bool = False, security_only: bool = False) -> str:
+    """
+    Get comprehensive report of available updates for Drupal core and contrib modules.
+
+    This tool helps identify outdated packages without requiring login to the site.
+    Perfect for:
+    - Proactive maintenance and security monitoring
+    - Planning update sprints
+    - Identifying security vulnerabilities
+    - Understanding technical debt
+
+    The tool uses composer to check for available updates, providing:
+    - Current version vs available version
+    - Update type (security, minor, major)
+    - Package descriptions
+    - Update recommendations
+
+    Common use cases:
+    - "What updates are available?"
+    - "Are there any security updates?"
+    - "Show me all outdated packages"
+    - "What's the status of Drupal core updates?"
+
+    Args:
+        include_dev: Include dev dependencies in the report (default: False)
+        security_only: Only show packages with security updates (default: False)
+
+    Returns:
+        Formatted report of available updates with recommendations
+
+    Examples:
+        get_available_updates()  # All production updates
+        get_available_updates(security_only=True)  # Security updates only
+        get_available_updates(include_dev=True)  # Include dev dependencies
+
+    Note: This tool runs 'composer outdated' which checks drupal.org and packagist
+          for available updates. Requires composer and network connectivity.
+    """
+    ensure_indexed()
+
+    output = []
+    output.append("🔄 DRUPAL UPDATES REPORT\n")
+    output.append("=" * 80)
+    output.append("")
+
+    # Get Drupal root from config
+    config = get_config()
+    drupal_root = Path(config.get("drupal_root"))
+
+    if not drupal_root.exists():
+        return (
+            "❌ ERROR: Drupal root not found\n\n"
+            f"The configured drupal_root does not exist: {drupal_root}\n"
+            "Please update drupal_root in config.json"
+        )
+
+    # Check if composer.json exists
+    composer_json = drupal_root / "composer.json"
+    if not composer_json.exists():
+        return (
+            "❌ ERROR: composer.json not found\n\n"
+            f"No composer.json found in: {drupal_root}\n"
+            "This tool requires a Composer-managed Drupal site."
+        )
+
+    # Determine the composer command to use
+    # For DDEV/Lando, use the wrapper; otherwise use system composer
+    drush_cmd = get_drush_command()
+    if drush_cmd and len(drush_cmd) > 1:
+        # Extract the environment wrapper (ddev, lando, fin)
+        wrapper = drush_cmd[0]
+        if wrapper in ["ddev", "lando", "fin"]:
+            composer_cmd = [wrapper, "composer"]
+        else:
+            composer_cmd = ["composer"]
+    else:
+        composer_cmd = ["composer"]
+
+    # Build the composer outdated command
+    cmd_args = ["outdated", "--format=json", "--direct"]
+
+    if not include_dev:
+        cmd_args.append("--no-dev")
+
+    # Run composer outdated
+    try:
+        env = _setup_drush_environment()
+        result = subprocess.run(
+            [*composer_cmd, *cmd_args],
+            cwd=str(drupal_root),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+
+        # Composer outdated returns exit code 0 if no updates, non-zero if updates available
+        # So we don't check returncode, just parse the output
+        if not result.stdout.strip():
+            output.append("✅ ALL PACKAGES UP TO DATE")
+            output.append("")
+            output.append("No updates are currently available for your installed packages.")
+            return "\n".join(output)
+
+        import json
+
+        data = json.loads(result.stdout)
+
+    except subprocess.TimeoutExpired:
+        return (
+            "❌ ERROR: Composer command timed out\n\n"
+            "The composer outdated command took too long to complete.\n"
+            "This might indicate network issues or a very large project.\n\n"
+            "Try running manually:\n"
+            f"  cd {drupal_root}\n"
+            f"  {' '.join(composer_cmd)} outdated --direct"
+        )
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse composer JSON: {e}")
+        logger.error(f"Output was: {result.stdout[:500]}")
+        return (
+            "❌ ERROR: Failed to parse composer output\n\n"
+            f"Composer command: {' '.join(composer_cmd + cmd_args)}\n"
+            f"Error: {str(e)}\n\n"
+            "The output format may have changed. Try running manually:\n"
+            f"  cd {drupal_root}\n"
+            f"  {' '.join(composer_cmd)} outdated --direct"
+        )
+    except Exception as e:
+        logger.error(f"Error running composer outdated: {e}")
+        return (
+            f"❌ ERROR: Failed to run composer outdated\n\n"
+            f"Error: {str(e)}\n\n"
+            "Ensure composer is installed and accessible.\n"
+            f"Command attempted: {' '.join(composer_cmd + cmd_args)}\n\n"
+            "For DDEV users: Ensure DDEV is running (ddev start)\n"
+            "For Lando users: Ensure Lando is running (lando start)"
+        )
+
+    # Parse the outdated packages
+    # Composer outdated JSON format:
+    # {
+    #   "installed": [
+    #     {
+    #       "name": "drupal/core",
+    #       "version": "11.2.4",
+    #       "latest": "11.2.5",
+    #       "latest-status": "semver-safe-update",
+    #       "description": "Drupal is an open source content management platform..."
+    #     }
+    #   ]
+    # }
+
+    if "installed" not in data or not data["installed"]:
+        output.append("✅ ALL PACKAGES UP TO DATE")
+        output.append("")
+        output.append("No updates are currently available for your installed packages.")
+        return "\n".join(output)
+
+    packages = data["installed"]
+
+    # Filter for security updates if requested
+    if security_only:
+        # Composer doesn't directly mark security updates in outdated command
+        # We would need to run 'composer audit' for that
+        # For now, show a message and run audit instead
+        output.append("🔒 SECURITY UPDATES CHECK\n")
+        output.append("Checking for security advisories...\n")
+
+        try:
+            audit_result = subprocess.run(
+                [*composer_cmd, "audit", "--format=json"],
+                cwd=str(drupal_root),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env=env,
+            )
+
+            if audit_result.returncode == 0:
+                output.append("✅ NO KNOWN SECURITY VULNERABILITIES")
+                output.append("")
+                output.append(
+                    "All installed packages are free from known security advisories."
+                )
+                return "\n".join(output)
+            else:
+                # Parse audit output
+                audit_data = json.loads(audit_result.stdout)
+                if "advisories" in audit_data and audit_data["advisories"]:
+                    output.append(
+                        f"⚠️  FOUND {len(audit_data['advisories'])} SECURITY ADVISORIES\n"
+                    )
+
+                    for pkg_name, advisories in audit_data["advisories"].items():
+                        output.append(f"📦 {pkg_name}")
+                        for adv in advisories:
+                            output.append(f"   • {adv.get('title', 'Security issue')}")
+                            output.append(
+                                f"     Affected: {adv.get('affectedVersions', 'unknown')}"
+                            )
+                            output.append(f"     CVE: {adv.get('cve', 'N/A')}")
+                            if adv.get("link"):
+                                output.append(f"     More info: {adv['link']}")
+                        output.append("")
+
+                    output.append("\n🔧 RECOMMENDED ACTIONS:")
+                    output.append("1. Review the security advisories above")
+                    output.append("2. Update affected packages: composer update <package-name>")
+                    output.append("3. Test thoroughly after updates")
+                    output.append("4. Deploy to production ASAP for security fixes")
+
+                    return "\n".join(output)
+
+        except Exception as e:
+            logger.error(f"Error running composer audit: {e}")
+            output.append(f"⚠️  Could not run security audit: {str(e)}\n")
+            output.append("Falling back to standard outdated report...\n")
+
+    # Categorize packages
+    core_updates = []
+    contrib_updates = []
+    other_updates = []
+
+    for pkg in packages:
+        name = pkg.get("name", "")
+        if name.startswith("drupal/core"):
+            core_updates.append(pkg)
+        elif name.startswith("drupal/"):
+            contrib_updates.append(pkg)
+        else:
+            other_updates.append(pkg)
+
+    # Display summary
+    total_updates = len(packages)
+    output.append(f"📊 SUMMARY: {total_updates} packages have updates available\n")
+    output.append(f"   • Drupal Core: {len(core_updates)} packages")
+    output.append(f"   • Contributed Modules: {len(contrib_updates)} packages")
+    output.append(f"   • Other Dependencies: {len(other_updates)} packages")
+    output.append("")
+
+    # Helper function to format update info
+    def format_update(pkg):
+        name = pkg.get("name", "unknown")
+        current = pkg.get("version", "unknown")
+        latest = pkg.get("latest", "unknown")
+        status = pkg.get("latest-status", "unknown")
+        desc = pkg.get("description", "")
+
+        # Interpret status
+        if status == "semver-safe-update":
+            update_type = "✅ SAFE (minor/patch)"
+        elif status == "update-possible":
+            update_type = "⚠️  MAJOR (breaking changes possible)"
+        elif status == "up-to-date":
+            update_type = "✅ UP TO DATE"
+        else:
+            update_type = f"❓ {status}"
+
+        lines = []
+        lines.append(f"📦 {name}")
+        lines.append(f"   Current: {current} → Latest: {latest}")
+        lines.append(f"   Type: {update_type}")
+        if desc:
+            # Truncate long descriptions
+            desc_short = desc[:80] + "..." if len(desc) > 80 else desc
+            lines.append(f"   {desc_short}")
+        lines.append("")
+        return lines
+
+    # Display Drupal Core updates
+    if core_updates:
+        output.append("=" * 80)
+        output.append("🌟 DRUPAL CORE UPDATES")
+        output.append("=" * 80)
+        output.append("")
+        for pkg in core_updates:
+            output.extend(format_update(pkg))
+
+    # Display contrib module updates
+    if contrib_updates:
+        output.append("=" * 80)
+        output.append("🔌 CONTRIBUTED MODULE UPDATES")
+        output.append("=" * 80)
+        output.append("")
+        for pkg in contrib_updates:
+            output.extend(format_update(pkg))
+
+    # Display other dependency updates
+    if other_updates and include_dev:
+        output.append("=" * 80)
+        output.append("📚 OTHER DEPENDENCIES")
+        output.append("=" * 80)
+        output.append("")
+        for pkg in other_updates:
+            output.extend(format_update(pkg))
+
+    # Recommendations
+    output.append("=" * 80)
+    output.append("🔧 RECOMMENDED ACTIONS")
+    output.append("=" * 80)
+    output.append("")
+
+    if core_updates:
+        output.append("1. DRUPAL CORE UPDATES:")
+        output.append("   • Review the Drupal core release notes")
+        output.append("   • Backup your database before updating")
+        output.append("   • Update core: composer update drupal/core-* --with-dependencies")
+        output.append("   • Run database updates: drush updatedb")
+        output.append("   • Clear caches: drush cache:rebuild")
+        output.append("")
+
+    if contrib_updates:
+        output.append("2. CONTRIB MODULE UPDATES:")
+        output.append("   • Review each module's release notes")
+        output.append("   • Update individually: composer update drupal/<module-name>")
+        output.append("   • Or update all: composer update drupal/*")
+        output.append("   • Check for breaking changes in major updates")
+        output.append("")
+
+    output.append("3. SECURITY UPDATES:")
+    output.append("   • Run: composer audit")
+    output.append("   • Or use: get_available_updates(security_only=True)")
+    output.append("   • Prioritize security updates over feature updates")
+    output.append("")
+
+    output.append("4. TESTING:")
+    output.append("   • Test updates in development environment first")
+    output.append("   • Verify all functionality still works")
+    output.append("   • Check watchdog logs for errors: get_watchdog_logs()")
+    output.append("   • Run automated tests if available")
+    output.append("")
+
+    # Note about manual update
+    output.append("=" * 80)
+    output.append("ℹ️  NOTE")
+    output.append("=" * 80)
+    output.append("")
+    output.append("This is a READ-ONLY report. Updates are NOT automatically applied.")
+    output.append("To apply updates, use the composer commands shown above or ask the AI")
+    output.append("assistant to help update specific packages.")
+    output.append("")
 
     return "\n".join(output)
