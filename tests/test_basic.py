@@ -43,4 +43,4 @@ def test_version():
             data = tomllib.load(f)
             version = data.get("project", {}).get("version")
             assert version is not None
-            assert version == "1.4.0"
+            assert version == "1.5.0"
