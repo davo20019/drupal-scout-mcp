@@ -271,7 +271,7 @@ def _build_dependency_graph() -> dict:
 
     # Build forward dependencies
     for module in all_modules:
-        module_name = module.get("module")
+        module_name = module.get("machine_name")  # Fixed: was "module", should be "machine_name"
         if not module_name:
             continue
 
