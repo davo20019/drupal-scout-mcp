@@ -96,17 +96,18 @@ def get_watchdog_logs(
     if limit < 1:
         limit = 1
 
-    # Build drush watchdog:show command (simpler approach)
-    valid_severities = [
-        "emergency",
-        "alert",
-        "critical",
-        "error",
-        "warning",
-        "notice",
-        "info",
-        "debug",
-    ]
+    # Build drush watchdog:show command
+    # NOTE: Drush requires capitalized severity levels (Error, Warning, etc.)
+    valid_severities = {
+        "emergency": "Emergency",
+        "alert": "Alert",
+        "critical": "Critical",
+        "error": "Error",
+        "warning": "Warning",
+        "notice": "Notice",
+        "info": "Info",
+        "debug": "Debug",
+    }
 
     # Try to get logs from drush
     # NOTE: Drush watchdog:show doesn't support comma-separated severities
@@ -114,10 +115,13 @@ def get_watchdog_logs(
     if severity:
         severity_lower = severity.lower()
         if severity_lower not in valid_severities:
-            return f"❌ Invalid severity level: {severity}\nValid options: {', '.join(valid_severities)}"
+            return f"❌ Invalid severity level: {severity}\nValid options: {', '.join(valid_severities.keys())}"
+
+        # Get the properly capitalized severity for drush
+        drush_severity = valid_severities[severity_lower]
 
         # Single severity - simple case
-        args = ["watchdog:show", "--format=json", f"--count={limit}", f"--severity={severity_lower}"]
+        args = ["watchdog:show", "--format=json", f"--count={limit}", f"--severity={drush_severity}"]
         if type:
             args.append(f"--type={type}")
 
@@ -125,14 +129,14 @@ def get_watchdog_logs(
     else:
         # Default to errors and warnings - need to fetch separately and combine
         # Fetch errors first
-        error_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=error"]
+        error_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=Error"]
         if type:
             error_args.append(f"--type={type}")
 
         error_result = run_drush_command(error_args, timeout=15)
 
         # Fetch warnings
-        warning_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=warning"]
+        warning_args = ["watchdog:show", "--format=json", f"--count={limit}", "--severity=Warning"]
         if type:
             warning_args.append(f"--type={type}")
 
