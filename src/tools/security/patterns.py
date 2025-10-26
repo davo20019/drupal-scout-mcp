@@ -10,6 +10,12 @@ Pattern-based detection for:
 - Access Control Issues
 - CSRF Protection
 - Deprecated/Unsafe APIs
+
+Each pattern includes:
+- pattern: Regular expression to match vulnerable code
+- severity: "high", "medium", or "low"
+- description: What the vulnerability is
+- recommendation: How to fix it
 """
 
 XSS_PATTERNS = {
@@ -323,3 +329,6 @@ DEPRECATED_API_PATTERNS = {
         "recommendation": "Use proper conditionals or assertions with boolean expressions",
     },
 }
+
+
+# ============================================================================
