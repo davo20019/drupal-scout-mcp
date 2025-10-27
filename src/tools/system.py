@@ -1084,3 +1084,305 @@ def get_status_report(severity_filter: Optional[str] = None, include_ok: bool = 
     output.append("")
 
     return "\n".join(output)
+
+
+@mcp.tool()
+def check_database_updates() -> str:
+    """
+    Check for pending database updates (read-only check).
+
+    Shows which modules have pending database updates that need to be run.
+    This is a read-only check - it does NOT run the updates.
+
+    Perfect for:
+    - After updating modules via Composer
+    - Diagnosing "database out of sync" errors
+    - Pre-deployment verification
+    - CI/CD pipeline checks
+
+    Returns:
+        Information about pending database updates or confirmation that schema is current
+
+    Examples:
+        check_database_updates()
+
+    Note:
+        To actually run updates, use: drush updatedb (or drush updb)
+        This tool only shows what updates are pending.
+    """
+    try:
+        import json
+
+        # Verify Scout health first
+        from src.core.drush import test_drush_connectivity
+
+        drush_ok, drush_msg, drush_details = test_drush_connectivity()
+        if not drush_ok or not drush_details.get("database_connected"):
+            return f"❌ ERROR: Database connection required\n\n{drush_msg}\n\nRun check_scout_health() for detailed diagnostics"
+
+        config = get_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ ERROR: Could not determine Drupal root. Check drupal_root in config."
+
+        drush_cmd = get_drush_command()
+
+        # Check for pending updates using drush updatedb-status
+        cmd = drush_cmd + ["updatedb:status", "--format=json"]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: Failed to check database updates\n\n{result.stderr}"
+
+        # Parse JSON output
+        try:
+            updates_data = json.loads(result.stdout.strip())
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try plain format
+            cmd = drush_cmd + ["updatedb:status"]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+            )
+            return f"DATABASE UPDATE STATUS:\n\n{result.stdout}"
+
+        # Build formatted output
+        output = []
+        output.append("🔄 DATABASE UPDATE STATUS")
+        output.append("=" * 80)
+        output.append("")
+
+        if not updates_data:
+            output.append("✅ No pending database updates")
+            output.append("")
+            output.append("Your database schema is current with all installed modules.")
+            return "\n".join(output)
+
+        output.append(f"⚠️  {len(updates_data)} pending update(s) found")
+        output.append("")
+        output.append("The following modules have pending database updates:")
+        output.append("")
+
+        for update in updates_data:
+            module = update.get("module", "Unknown")
+            update_id = update.get("update_id", "")
+            description = update.get("description", "")
+
+            output.append(f"MODULE: {module}")
+            output.append(f"  Update ID: {update_id}")
+            if description:
+                output.append(f"  Description: {description}")
+            output.append("")
+
+        output.append("=" * 80)
+        output.append("HOW TO RUN UPDATES:")
+        output.append("=" * 80)
+        output.append("")
+        output.append("1. BACKUP YOUR DATABASE FIRST (critical!)")
+        output.append("   drush sql:dump > backup.sql")
+        output.append("")
+        output.append("2. Run the updates:")
+        output.append("   drush updatedb")
+        output.append("   (or use the alias: drush updb)")
+        output.append("")
+        output.append("3. Clear caches after updates:")
+        output.append("   drush cache:rebuild")
+        output.append("")
+        output.append("⚠️  WARNING:")
+        output.append("Database updates are IRREVERSIBLE. Always backup first!")
+        output.append("Test updates on a non-production environment when possible.")
+        output.append("")
+
+        return "\n".join(output)
+
+    except subprocess.TimeoutExpired:
+        return "❌ ERROR: Command timed out checking database updates"
+    except Exception as e:
+        logger.exception("Error checking database updates")
+        return f"❌ ERROR: Failed to check database updates: {str(e)}"
+
+
+@mcp.tool()
+def get_config_status() -> str:
+    """
+    Show configuration synchronization status.
+
+    Compares configuration in the database with configuration files (YAML)
+    and shows what's different. This is essential for the config export/import workflow.
+
+    Shows:
+    - New config in database (not yet exported)
+    - Changed config (database differs from files)
+    - Deleted config (in files but not database)
+    - Overall sync status
+
+    Perfect for:
+    - Before running config:export (drush cex)
+    - Before running config:import (drush cim)
+    - Pre-deployment checks
+    - Understanding what will change during import
+
+    Returns:
+        Configuration sync status and differences
+
+    Examples:
+        get_config_status()
+
+    Note:
+        This is read-only. It does NOT export or import config.
+    """
+    try:
+        import json
+
+        # Verify Scout health first
+        from src.core.drush import test_drush_connectivity
+
+        drush_ok, drush_msg, drush_details = test_drush_connectivity()
+        if not drush_ok or not drush_details.get("database_connected"):
+            return f"❌ ERROR: Database connection required\n\n{drush_msg}\n\nRun check_scout_health() for detailed diagnostics"
+
+        config = get_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ ERROR: Could not determine Drupal root. Check drupal_root in config."
+
+        drush_cmd = get_drush_command()
+
+        # Get config status using drush config:status
+        cmd = drush_cmd + ["config:status", "--format=json"]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+        )
+
+        if result.returncode != 0:
+            # Try without JSON format
+            cmd = drush_cmd + ["config:status"]
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+            )
+
+            if "Configuration files and database are in sync" in result.stdout:
+                output = []
+                output.append("⚙️  CONFIGURATION STATUS")
+                output.append("=" * 80)
+                output.append("")
+                output.append("✅ Configuration is IN SYNC")
+                output.append("")
+                output.append("Database and configuration files match perfectly.")
+                output.append("No export or import needed.")
+                return "\n".join(output)
+
+            return f"CONFIGURATION STATUS:\n\n{result.stdout}"
+
+        # Parse JSON output
+        try:
+            config_data = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+        except json.JSONDecodeError:
+            return f"CONFIGURATION STATUS:\n\n{result.stdout}"
+
+        # Build formatted output
+        output = []
+        output.append("⚙️  CONFIGURATION STATUS")
+        output.append("=" * 80)
+        output.append("")
+
+        if not config_data:
+            output.append("✅ Configuration is IN SYNC")
+            output.append("")
+            output.append("Database and configuration files match perfectly.")
+            output.append("No export or import needed.")
+            return "\n".join(output)
+
+        # Categorize by state
+        only_in_db = []  # Need to export
+        only_in_files = []  # Will be created on import
+        different = []  # Need to sync
+
+        for item in config_data:
+            state = item.get("state", "")
+            name = item.get("name", "Unknown")
+
+            if state == "Only in DB":
+                only_in_db.append(name)
+            elif state == "Only in sync dir":
+                only_in_files.append(name)
+            elif state == "Different":
+                different.append(name)
+
+        total_changes = len(only_in_db) + len(only_in_files) + len(different)
+        output.append(f"⚠️  Configuration OUT OF SYNC: {total_changes} difference(s)")
+        output.append("")
+
+        # Show only in database (need export)
+        if only_in_db:
+            output.append(f"NEW IN DATABASE ({len(only_in_db)}):")
+            output.append("These exist in database but not in config files")
+            output.append("")
+            for name in sorted(only_in_db)[:20]:  # Limit to 20
+                output.append(f"  + {name}")
+            if len(only_in_db) > 20:
+                output.append(f"  ... and {len(only_in_db) - 20} more")
+            output.append("")
+
+        # Show different (need sync)
+        if different:
+            output.append(f"CHANGED ({len(different)}):")
+            output.append("These differ between database and config files")
+            output.append("")
+            for name in sorted(different)[:20]:  # Limit to 20
+                output.append(f"  ~ {name}")
+            if len(different) > 20:
+                output.append(f"  ... and {len(different) - 20} more")
+            output.append("")
+
+        # Show only in files (will be created/restored on import)
+        if only_in_files:
+            output.append(f"ONLY IN FILES ({len(only_in_files)}):")
+            output.append("These exist in config files but not database")
+            output.append("")
+            for name in sorted(only_in_files)[:20]:  # Limit to 20
+                output.append(f"  - {name}")
+            if len(only_in_files) > 20:
+                output.append(f"  ... and {len(only_in_files) - 20} more")
+            output.append("")
+
+        output.append("=" * 80)
+        output.append("WHAT TO DO:")
+        output.append("=" * 80)
+        output.append("")
+
+        if only_in_db or different:
+            output.append("TO EXPORT (database → files):")
+            output.append("  drush config:export")
+            output.append("  (or use the alias: drush cex)")
+            output.append("")
+            output.append("  This will update the YAML files in your config directory")
+            output.append("  with the current database configuration.")
+            output.append("")
+
+        if only_in_files or different:
+            output.append("TO IMPORT (files → database):")
+            output.append("  drush config:import")
+            output.append("  (or use the alias: drush cim)")
+            output.append("")
+            output.append("  This will update the database with configuration")
+            output.append("  from the YAML files.")
+            output.append("")
+
+        output.append("⚠️  IMPORTANT:")
+        output.append("- Always backup database before importing config")
+        output.append("- Review changes carefully before syncing")
+        output.append("- Config import can delete content types, fields, etc.")
+        output.append("- Test on non-production environments first")
+        output.append("")
+
+        return "\n".join(output)
+
+    except subprocess.TimeoutExpired:
+        return "❌ ERROR: Command timed out checking config status"
+    except Exception as e:
+        logger.exception("Error getting config status")
+        return f"❌ ERROR: Failed to get config status: {str(e)}"
