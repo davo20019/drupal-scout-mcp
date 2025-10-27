@@ -164,6 +164,224 @@ def describe_theme(theme_name: str) -> str:
 
 
 @mcp.tool()
+def get_theme_regions(theme_name: str) -> str:
+    """
+    Get theme region layout as text (for AI context and quick reference).
+
+    Shows region structure in ASCII layout format with block counts.
+    Perfect for AI to understand theme structure and answer questions
+    about regions and block placement.
+
+    This is the TEXT version - for visual HTML, use visualize_theme_regions().
+
+    Args:
+        theme_name: Machine name of theme (e.g., "olivero", "claro", "my_custom_theme")
+
+    Returns:
+        ASCII representation of theme regions with block counts
+
+    Examples:
+        get_theme_regions("olivero")
+        get_theme_regions("my_custom_theme")
+    """
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ ERROR: Could not determine Drupal root. Check drupal_root in config."
+
+        # Get theme info
+        theme_info = _find_and_parse_theme_info(drupal_root, theme_name)
+        if not theme_info:
+            return f"❌ ERROR: Theme '{theme_name}' not found"
+
+        regions = theme_info.get("regions", {})
+        if not regions:
+            return f"❌ ERROR: No regions defined in theme '{theme_name}'"
+
+        # Get block counts per region
+        blocks_by_region = {}
+        db_ok, _ = verify_database_connection()
+        if db_ok:
+            blocks_data = _get_blocks_for_theme_simple(drupal_root, theme_name)
+            blocks_by_region = blocks_data
+
+        # Detect layout
+        layout_map = _detect_region_layout(regions)
+
+        # Group regions by position
+        header_regions = [r for r, pos in layout_map.items() if pos == "header"]
+        nav_regions = [r for r, pos in layout_map.items() if pos == "navigation"]
+        sidebar_left_regions = [r for r, pos in layout_map.items() if pos == "sidebar_left"]
+        content_regions = [r for r, pos in layout_map.items() if pos == "content"]
+        sidebar_right_regions = [r for r, pos in layout_map.items() if pos == "sidebar_right"]
+        footer_regions = [r for r, pos in layout_map.items() if pos == "footer"]
+        other_regions = [r for r, pos in layout_map.items() if pos == "other"]
+
+        # Build simple, honest list
+        output = []
+        total_regions = len(regions)
+        total_blocks = sum(len(blocks) for blocks in blocks_by_region.values())
+
+        output.append(
+            f"🎨 {theme_info.get('name', theme_name).upper()} REGIONS ({total_regions} total, {total_blocks} blocks placed):"
+        )
+        output.append("")
+
+        # Group by position
+        full_width = []
+        main_content = []
+
+        # Full-width regions (header, footer, full-width navigation)
+        full_width.extend(header_regions)
+        full_width.extend([r for r in footer_regions if "top" in r.lower()])
+        full_width.extend([r for r in nav_regions if "secondary" in r.lower()])
+        full_width.extend([r for r in footer_regions if "bottom" in r.lower()])
+
+        # Main content area regions
+        main_content.extend([(r, "Left") for r in sidebar_left_regions])
+        main_content.extend([(r, "Center") for r in content_regions])
+        main_content.extend([(r, "Right") for r in sidebar_right_regions])
+        main_content.extend(
+            [
+                (r, "Navigation")
+                for r in nav_regions
+                if "primary" in r.lower() or "main" in r.lower()
+            ]
+        )
+
+        # Display full-width regions
+        if full_width:
+            output.append("FULL-WIDTH REGIONS:")
+            for region in full_width:
+                label = regions.get(region, region)
+                block_count = len(blocks_by_region.get(region, []))
+                block_text = f"{block_count} block" + ("s" if block_count != 1 else "")
+                output.append(f"  ▓ {label} ({block_text})")
+            output.append("")
+
+        # Display main content area
+        if main_content:
+            output.append("MAIN CONTENT AREA:")
+            for region, position in main_content:
+                label = regions.get(region, region)
+                block_count = len(blocks_by_region.get(region, []))
+                block_text = f"{block_count} block" + ("s" if block_count != 1 else "")
+
+                # Icon based on position
+                if position == "Left":
+                    icon = "◄"
+                elif position == "Right":
+                    icon = "►"
+                else:
+                    icon = "■"
+
+                # Mark empty regions
+                empty_marker = " - Empty" if block_count == 0 else ""
+
+                output.append(f"  {icon} {label} ({block_text}) [{position}{empty_marker}]")
+            output.append("")
+
+        # Other regions
+        if other_regions:
+            output.append("OTHER REGIONS:")
+            for region in other_regions:
+                label = regions[region]
+                block_count = len(blocks_by_region.get(region, []))
+                block_text = f"{block_count} block" + ("s" if block_count != 1 else "")
+                empty_marker = " - Empty" if block_count == 0 else ""
+                output.append(f"  • {label} ({block_text}){empty_marker}")
+            output.append("")
+
+        output.append("💡 Tip: Use get_theme_blocks() for detailed block placement information")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error getting theme regions")
+        return f"❌ ERROR: Failed to get theme regions: {str(e)}"
+
+
+def _detect_region_layout(regions: Dict[str, str]) -> Dict[str, str]:
+    """
+    Detect region positioning based on common naming patterns.
+
+    Returns dict mapping region to position: 'header', 'sidebar_left', 'sidebar_right',
+    'content', 'footer', 'navigation', 'other'
+    """
+    layout = {}
+
+    for region_key, region_label in regions.items():
+        region_lower = region_key.lower()
+        label_lower = region_label.lower()
+
+        # Header regions
+        if any(word in region_lower or word in label_lower for word in ["header", "top", "banner"]):
+            layout[region_key] = "header"
+        # Footer regions
+        elif any(word in region_lower or word in label_lower for word in ["footer", "bottom"]):
+            layout[region_key] = "footer"
+        # Left sidebar
+        elif any(
+            word in region_lower or word in label_lower
+            for word in ["sidebar_first", "left", "sidebar-first"]
+        ):
+            layout[region_key] = "sidebar_left"
+        # Right sidebar
+        elif any(
+            word in region_lower or word in label_lower
+            for word in ["sidebar_second", "right", "sidebar-second", "aside"]
+        ):
+            layout[region_key] = "sidebar_right"
+        # Content/main region
+        elif any(
+            word in region_lower or word in label_lower for word in ["content", "main", "primary"]
+        ):
+            layout[region_key] = "content"
+        # Navigation/menu
+        elif any(word in region_lower or word in label_lower for word in ["nav", "menu"]):
+            layout[region_key] = "navigation"
+        # Default to other
+        else:
+            layout[region_key] = "other"
+
+    return layout
+
+
+def _get_blocks_for_theme_simple(drupal_root: Path, theme_name: str) -> Dict[str, list]:
+    """Get simplified block counts per region."""
+    drush_cmd = get_drush_command()
+
+    php_script = f"""
+$theme = '{theme_name}';
+$blocks = \\Drupal::entityTypeManager()->getStorage('block')->loadByProperties(['theme' => $theme]);
+
+$result = [];
+foreach ($blocks as $block) {{
+  if ($block->status()) {{
+    $region = $block->getRegion();
+    $result[$region][] = ['id' => $block->id()];
+  }}
+}}
+
+echo json_encode($result, JSON_UNESCAPED_SLASHES);
+"""
+
+    try:
+        cmd = drush_cmd + ["eval", php_script]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+        )
+        if result.returncode == 0 and result.stdout:
+            return json.loads(result.stdout.strip())
+    except Exception:
+        pass
+
+    return {}
+
+
+@mcp.tool()
 def get_active_themes() -> str:
     """
     Get information about active and installed themes.
