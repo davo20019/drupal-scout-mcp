@@ -108,7 +108,21 @@ Edit `~/.config/drupal-scout/config.json`:
 
 4. **Add to MCP client**
 
-For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+For MCP clients (e.g., `~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+**Using virtual environment (recommended for dependency isolation):**
+```json
+{
+  "mcpServers": {
+    "drupal-scout": {
+      "command": "/path/to/drupal-scout-mcp/venv/bin/python3",
+      "args": ["/path/to/drupal-scout-mcp/server.py"]
+    }
+  }
+}
+```
+
+**Using system Python:**
 ```json
 {
   "mcpServers": {
@@ -120,7 +134,9 @@ For Claude Desktop (`~/Library/Application Support/Claude/claude_desktop_config.
 }
 ```
 
-For Cursor, add to MCP settings.
+> **💡 TIP:** Using the virtual environment's Python interpreter ensures all dependencies are available and isolated from system packages.
+
+For Cursor, add to MCP settings using the same format.
 
 5. **Restart your MCP client**
 
