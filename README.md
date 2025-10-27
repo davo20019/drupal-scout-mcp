@@ -291,6 +291,41 @@ AI knows: Automatically sets include_field_data=True when user asks for "body te
 ```
 
 **export_users_to_csv** - Export user accounts directly to CSV for audits and migrations
+
+**export_media_to_csv** - Export media entities directly to CSV for asset audits and migrations
+```
+Example: "Export all images to CSV"
+Example: "Export all media with usage analysis"
+Example: "Export videos including orphaned media"
+Bypasses: MCP token limits by writing directly to filesystem
+Perfect for: Media audits, file storage analysis, migration planning, accessibility audits
+Output: Saves to Drupal root directory as media_export_{type}_{timestamp}.csv
+Filters: media_type (image, video, document, audio), include_unused, limit
+Modes:
+  - summary_only=True: mid, name, bundle, file_size_mb, created, author (7 columns, fast)
+  - summary_only=False: 22+ columns including:
+    * Basic: mid, uuid, name, bundle (media type), status, langcode, timestamps, author
+    * Files: file_uri, file_url, file_mime, file_size, file_size_mb, file_extension
+    * Metadata: alt_text (images), width, height, thumbnail_uri
+    * Usage: usage_count, usage_locations (nodes/paragraphs/blocks), orphaned flag
+  - include_field_data=True: Adds custom media fields (use with summary_only=False)
+    **WHY USE THIS:**
+    - Migration planning: Map custom media fields to new system
+    - Field audit: Find incomplete metadata, missing captions
+    - Custom field analysis: See what media data exists
+    **WHAT YOU GET:**
+    * All custom media fields auto-detected and included
+    * Captions, credits, copyright fields
+    * Custom metadata fields
+    * Performance: Adds 20-30% to export time
+Performance: 100 items ~10s, 1000 items ~60s, 5000 items ~5min
+Use case: Migration planning, accessibility audits, file cleanup, storage optimization
+Smart detection: Automatically sets include_field_data=True when user asks for "field data", "custom fields", or "complete export"
+Accessibility: Find images missing alt text, identify media needing descriptions
+Storage: Analyze file sizes, find large files, optimize storage usage
+```
+
+**export_users_to_csv** - Export user accounts directly to CSV for audits and migrations
 ```
 Example: "Export all users to CSV"
 Example: "Export users with full profile data for migration"
@@ -1256,6 +1291,99 @@ AI: "Perfect! The export now includes all custom profile fields. You can use thi
      4. Identify which users have incomplete profiles (empty fields)"
 ```
 
+### Media Audit and Asset Management Workflow (Media CSV Export)
+```
+User: "I need to audit our media library and find images missing alt text for accessibility compliance"
+AI: "I'll export all your media with full details for analysis."
+MCP: export_media_to_csv(summary_only=False)
+Result: "✅ Successfully exported 1,523 media items to /path/to/drupal/media_export_all_20251026.csv (385 KB)
+
+         Media types found: image (1,200), video (200), document (123)
+         Total file size: 2,847.5 MB
+
+         Columns included (22 total):
+         - Basic: mid, uuid, name, bundle, status, langcode, created, changed, author
+         - Files: file_uri, file_url, file_mime, file_size, file_size_mb, file_extension
+         - Metadata: alt_text, width, height, thumbnail_uri
+         - Usage: usage_count, usage_locations, orphaned
+
+         Preview:
+         mid,uuid,name,bundle,status,file_url,file_size_mb,alt_text,usage_count,usage_locations,orphaned
+         1,abc-123,Hero Banner,image,published,https://example.com/.../hero.jpg,2.3,Homepage hero image,5,node:123 | node:456,NO
+         2,def-456,Product Photo,image,published,https://example.com/.../product.jpg,1.8,,3,node:789 | paragraph:12,NO
+         3,ghi-789,Old Video,video,published,https://example.com/.../video.mp4,45.2,,0,,YES"
+
+AI: "Perfect! I've exported all 1,523 media items. The CSV includes:
+     - File information: Size, type, URL for each asset
+     - Accessibility data: Alt text for images
+     - Usage tracking: Where each media item is referenced
+     - Orphaned flag: Media not used anywhere
+
+     You can now open this in Excel/Google Sheets to:
+     - Audit accessibility (find missing alt text)
+     - Identify orphaned media (not referenced anywhere)
+     - Analyze storage usage (sort by file_size_mb)
+     - Plan migration (map file types to new system)
+
+     Would you like me to analyze specific patterns?"
+
+User: "Show me all images missing alt text"
+AI: [Reads CSV file and filters by empty alt_text]
+    "Found 234 images missing alt text:
+
+     HIGH PRIORITY (used in multiple places):
+     - mid:2 'Product Photo' - Used in 3 locations (node:789, paragraph:12, block:5)
+     - mid:45 'Team Photo' - Used in 2 locations (node:234, node:567)
+     - mid:89 'Logo Variant' - Used in 5 locations
+
+     MEDIUM PRIORITY (used once):
+     - mid:123 'Blog Image' - Used in 1 location (node:890)
+     ... [continues listing]
+
+     RECOMMENDATIONS:
+     - Prioritize adding alt text to high-usage images first
+     - These images appear on multiple pages/content items
+     - Required for WCAG 2.1 AA compliance"
+
+User: "What about orphaned media?"
+AI: [Filters CSV by orphaned=YES]
+    "Storage cleanup analysis:
+     - 45 orphaned media items found (not referenced anywhere)
+     - Total wasted storage: 127.3 MB
+
+     SAFE TO DELETE:
+     Videos (3 items, 89.5 MB):
+     - mid:3 'Old Video' - 45.2 MB, uploaded 2 years ago
+     - mid:67 'Unused Demo' - 32.1 MB, uploaded 3 years ago
+     - mid:145 'Test Video' - 12.2 MB, uploaded 1 year ago
+
+     Images (38 items, 34.8 MB):
+     - Multiple old thumbnails and test images
+     - Duplicates from migration
+
+     Documents (4 items, 3.0 MB):
+     - Old PDFs no longer in use
+
+     You can safely delete these to free up 127.3 MB of storage."
+
+User: "Export just the images so I can focus on accessibility fixes"
+AI: "I'll export only images with detailed information."
+MCP: export_media_to_csv(media_type="image", summary_only=False)
+Result: "✅ Successfully exported 1,200 images to /path/to/drupal/media_export_image_20251026.csv (312 KB)
+
+         This filtered export makes it easier to:
+         - Focus on image accessibility (alt text audit)
+         - Review image dimensions (width/height)
+         - Identify large images needing optimization
+         - Plan image field migration"
+
+AI: "Perfect! Now you have a focused CSV with only images. You can:
+     1. Sort by empty alt_text to prioritize fixes
+     2. Sort by file_size_mb to find images needing optimization
+     3. Filter by usage_count=0 to find unused images
+     4. Use the mid column to quickly update media via drush"
+```
+
 ## How It Works
 
 ### Division of Labor
@@ -1444,7 +1572,7 @@ Scout will attempt to auto-detect drush, but this may fail in MCP environments.
 
 ### Drush Configuration (Important!)
 
-**11 out of 42 tools require drush** to access the Drupal database:
+**12 out of 43 tools require drush** to access the Drupal database:
 - `get_taxonomy_info()` - Taxonomy usage analysis
 - `get_entity_structure()` - Entity/bundle information
 - `get_field_info()` - Field configurations
@@ -1453,6 +1581,7 @@ Scout will attempt to auto-detect drush, but this may fail in MCP environments.
 - `export_taxonomy_usage_to_csv()` - CSV exports
 - `export_nodes_to_csv()` - CSV exports
 - `export_users_to_csv()` - CSV exports
+- `export_media_to_csv()` - CSV exports
 - And more...
 
 **Auto-detection (may fail in MCP):**
