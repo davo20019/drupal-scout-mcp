@@ -1279,7 +1279,7 @@ def get_config_status() -> str:
 
         # Parse JSON output
         try:
-            config_data = json.loads(result.stdout.strip()) if result.stdout.strip() else []
+            config_data = json.loads(result.stdout.strip()) if result.stdout.strip() else {}
         except json.JSONDecodeError:
             return f"CONFIGURATION STATUS:\n\n{result.stdout}"
 
@@ -1301,16 +1301,16 @@ def get_config_status() -> str:
         only_in_files = []  # Will be created on import
         different = []  # Need to sync
 
-        for item in config_data:
+        # config_data is a dict where keys are config names and values have 'state'
+        for config_name, item in config_data.items():
             state = item.get("state", "")
-            name = item.get("name", "Unknown")
 
             if state == "Only in DB":
-                only_in_db.append(name)
+                only_in_db.append(config_name)
             elif state == "Only in sync dir":
-                only_in_files.append(name)
+                only_in_files.append(config_name)
             elif state == "Different":
-                different.append(name)
+                different.append(config_name)
 
         total_changes = len(only_in_db) + len(only_in_files) + len(different)
         output.append(f"⚠️  Configuration OUT OF SYNC: {total_changes} difference(s)")
