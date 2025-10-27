@@ -375,24 +375,21 @@ Use case: Debugging production issues, understanding why something broke
 
 ### Theme Analysis Tools
 
-**visualize_theme_regions** - Generate HTML visualization of theme layout
+**get_theme_regions** - Get theme region layout as simple text list
 ```
-Example: "Visualize the olivero theme regions"
-Example: "Show me my custom theme layout"
-Example: "Create visual layout for my_theme"
-Creates: Interactive HTML file showing theme structure
-Output: Saves to Drupal root as theme_regions_{theme_name}_{timestamp}.html
-Perfect for: Understanding theme structure, planning block placement, visual documentation
+Example: "What regions does olivero have?"
+Example: "Show me regions for my_custom_theme"
+Example: "List theme regions"
+Perfect for: Quick region overview, AI context, understanding layout
+Output: Simple text list grouped by position
 Shows:
-  - Visual layout of regions (header, sidebars, content, footer)
-  - Auto-detected region positioning based on naming patterns
-  - Blocks placed in each region with weights and ordering
-  - Empty vs populated regions
-  - Block visibility conditions
-  - Color-coded regions for easy identification
-Opens: In browser for visual inspection
-Use case: Theme development, block placement planning, documentation
-Detects: Header, navigation, sidebar (left/right), content, footer regions automatically
+  - Full-width regions (header, footer, navigation)
+  - Main content area with positioning (Left, Center, Right)
+  - Block counts per region
+  - Empty regions marked
+Uses icons: ▓ (full-width), ◄ (left), ■ (center), ► (right)
+Use case: Fast region check, planning block placement, AI needs context
+Format: Clean list AI can easily parse and reference
 ```
 
 **describe_theme** - Get comprehensive theme information and metadata
@@ -452,6 +449,77 @@ Information:
   - Theme paths
 Perfect for: Quick theme status check, finding which themes are active
 Use case: Theme management, checking installations, compatibility verification
+```
+
+### Template Discovery Tools
+
+**find_theme_templates** - Find Twig template files with pattern filtering
+```
+Example: "Find node templates in olivero"
+Example: "What view templates exist?"
+Example: "Find all templates with 'block' in the name"
+Perfect for: Template discovery, seeing what's overridden, finding template locations
+Searches: All .html.twig files in theme
+Filters: Optional pattern (e.g., "node--", "views", "block")
+Shows:
+  - Template filenames grouped by directory
+  - What each template likely overrides (core/contrib detection)
+  - Full file paths
+Output: Organized list by directory with override hints
+Use case: "What templates are in my theme?", "Do I have a node--article template?"
+Token efficient: Fast structured output AI can parse
+```
+
+**get_theme_template_overrides** - Show which core/contrib templates are overridden
+```
+Example: "What templates override core in my theme?"
+Example: "Show me template overrides for olivero"
+Example: "Which contrib templates are customized?"
+Perfect for: Understanding customizations, theme audit, migration planning
+Analyzes: All theme templates vs core/contrib sources
+Groups by: Core overrides, Contrib overrides, Other
+Shows:
+  - Template filename
+  - Location in theme
+  - Original source path (core/modules/views, core/themes/stable9, etc.)
+Use case: Theme audit, understanding what's customized, planning upgrades
+Helps: Identify which templates need attention during Drupal upgrades
+```
+
+**get_template_suggestions** - Get template naming hierarchy for entities
+```
+Example: "Template suggestions for article nodes"
+Example: "How do I name a block template?"
+Example: "Template suggestions for taxonomy term"
+Perfect for: Learning template naming, understanding specificity, creating overrides
+Covers: node, block, taxonomy_term, user, field, page, and generic entities
+Shows: Template naming options from most to least specific
+Output:
+  1. node--article--123.html.twig (specific node)
+  2. node--article--teaser.html.twig (bundle + view mode)
+  3. node--article.html.twig (all articles)
+  4. node--123.html.twig (specific node ID)
+  5. node.html.twig (all nodes - base)
+Use case: "How do I override just article nodes?", "Template naming for blocks?"
+Educational: Explains Drupal's template hierarchy
+```
+
+**get_view_template_info** - Get template naming for overriding views
+```
+Example: "How do I override the taxonomy_term view?"
+Example: "Template for frontpage view"
+Example: "View template suggestions for content view"
+Perfect for: View theming, understanding view template hierarchy
+Instant answers: No need to navigate to view UI or enable Twig debugging
+Shows:
+  - Exact template name to use (views-view--taxonomy_term.html.twig)
+  - Where to place it (your_theme/templates/)
+  - Base template location to copy from
+  - Related templates (field, unformatted, table, grid, etc.)
+  - Clear cache instructions
+Supports: View-specific and display-specific templates
+Use case: "I want to theme the taxonomy_term view", "Override frontpage view display"
+Saves time: No fumbling with URLs or Twig debugging - instant answer
 ```
 
 ### Security Analysis Tools
@@ -1653,7 +1721,7 @@ Scout will attempt to auto-detect drush, but this may fail in MCP environments.
 
 ### Drush Configuration (Important!)
 
-**12 out of 43 tools require drush** to access the Drupal database:
+**15 out of 51 tools require drush** to access the Drupal database:
 - `get_taxonomy_info()` - Taxonomy usage analysis
 - `get_entity_structure()` - Entity/bundle information
 - `get_field_info()` - Field configurations
