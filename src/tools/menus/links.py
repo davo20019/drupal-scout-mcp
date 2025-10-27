@@ -115,12 +115,34 @@ if ($url_object && $url_object->isRouted()) {{
 }}
 
 // STEP 2: Find menu links that match any of our search paths
-$menu_link_manager = \\Drupal::service('plugin.manager.menu.link');
-$menu_links = $menu_link_manager->loadLinksByRoute(NULL, [], NULL);
+// Get all menus
+$menu_storage = \\Drupal::entityTypeManager()->getStorage('menu');
+$menus = $menu_storage->loadMultiple();
+
+$menu_tree = \\Drupal::menuTree();
+$parameters = new \\Drupal\\Core\\Menu\\MenuTreeParameters();
 
 $results = [];
+$all_menu_links = [];
 
-foreach ($menu_links as $menu_link_id => $menu_link) {{
+// Collect all menu links from all menus
+foreach ($menus as $menu_id => $menu) {{
+    $tree = $menu_tree->load($menu_id, $parameters);
+    foreach ($tree as $element) {{
+        $menu_link = $element->link;
+        $menu_link_id = $menu_link->getPluginId();
+        $all_menu_links[$menu_link_id] = [
+            'link' => $menu_link,
+            'menu_id' => $menu_id,
+            'menu_label' => $menu->label(),
+        ];
+    }}
+}}
+
+foreach ($all_menu_links as $menu_link_id => $data) {{
+    $menu_link = $data['link'];
+    $menu_id = $data['menu_id'];
+    $menu_label = $data['menu_label'];
     $url = $menu_link->getUrlObject();
 
     try {{
@@ -160,6 +182,7 @@ foreach ($menu_links as $menu_link_id => $menu_link) {{
         // Check route-based match (most reliable for entities)
         if (!$match && $search_route_name && $url->isRouted()) {{
             $link_route_name = $route_name;
+
             if ($link_route_name === $search_route_name) {{
                 // Same route, check parameters
                 if ($search_route_name === 'entity.node.canonical') {{
@@ -202,26 +225,26 @@ foreach ($menu_links as $menu_link_id => $menu_link) {{
         }}
 
         if ($match) {{
-
-            $menu_name = $menu_link->getMenuName();
-
-            // Get menu details
-            $menu_storage = \\Drupal::entityTypeManager()->getStorage('menu');
-            $menu = $menu_storage->load($menu_name);
-            $menu_label = $menu ? $menu->label() : $menu_name;
+            // We already have menu_id and menu_label from the data structure
+            $menu_name = $menu_id;
 
             // Get parent chain
             $parent_chain = [];
             $parent_id = $menu_link->getParent();
+            $menu_link_manager = \\Drupal::service('plugin.manager.menu.link');
             while ($parent_id) {{
-                $parent_link = $menu_link_manager->createInstance($parent_id);
-                if ($parent_link) {{
-                    $parent_chain[] = [
-                        'title' => $parent_link->getTitle(),
-                        'id' => $parent_id,
-                    ];
-                    $parent_id = $parent_link->getParent();
-                }} else {{
+                try {{
+                    $parent_link = $menu_link_manager->createInstance($parent_id);
+                    if ($parent_link) {{
+                        $parent_chain[] = [
+                            'title' => $parent_link->getTitle(),
+                            'id' => $parent_id,
+                        ];
+                        $parent_id = $parent_link->getParent();
+                    }} else {{
+                        break;
+                    }}
+                }} catch (\\Exception $e) {{
                     break;
                 }}
             }}
