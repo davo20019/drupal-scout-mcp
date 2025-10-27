@@ -35,6 +35,7 @@ import src.tools.code_analysis  # noqa: E402, F401
 import src.tools.security  # noqa: E402, F401
 import src.tools.themes  # noqa: E402, F401
 import src.tools.paragraphs  # noqa: E402, F401
+import src.tools.menus  # noqa: E402, F401
 
 # Note: All tool implementations moved to src/tools/ modules
 # This keeps server.py focused on MCP server setup and initialization

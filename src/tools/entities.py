@@ -1290,3 +1290,509 @@ try {{
     except Exception as e:
         logger.exception("Error getting entity info")
         return f"❌ ERROR: {str(e)}"
+
+
+@mcp.tool()
+def search_entities(
+    entity_type: str,
+    search_field: str,
+    search_value: str,
+    bundle: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """
+    Search for entities by field value (title, email, name, custom fields, etc.).
+
+    Perfect for answering "do we have any nodes with this title?" or "find users with email @example.com"
+
+    Args:
+        entity_type: Entity type to search (node, user, taxonomy_term, media, etc.)
+        search_field: Field to search in:
+          - For nodes: "title", "body", "field_*"
+          - For users: "name" (username), "mail" (email), "field_*"
+          - For taxonomy: "name" (term name), "field_*"
+          - For media: "name" (media name), "field_*"
+        search_value: Value to search for (supports partial matching)
+        bundle: Optional bundle filter (article, page, tags, etc.)
+        limit: Max results to return (default 20)
+
+    Returns:
+        List of matching entities with ID, label, bundle, and key field values
+
+    Examples:
+        search_entities("node", "title", "Complete Business Solutions")
+        search_entities("node", "title", "Solutions", bundle="article")
+        search_entities("user", "mail", "@example.com")
+        search_entities("user", "name", "admin")
+        search_entities("taxonomy_term", "name", "technology")
+        search_entities("node", "field_subtitle", "Guide")
+    """
+    try:
+        from src.core.config import load_config
+        from src.core.drush import get_drush_command
+        from src.core.database import verify_database_connection
+        import subprocess
+
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+        if not drupal_root.exists():
+            return "❌ ERROR: Drupal root not found"
+
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return f"❌ ERROR: Database required\n{db_msg}"
+
+        drush_cmd = get_drush_command()
+
+        # PHP script to search entities
+        php = f"""
+$entity_type = "{entity_type}";
+$search_field = "{search_field}";
+$search_value = "{search_value}";
+$bundle = {f'"{bundle}"' if bundle else 'NULL'};
+$limit = {limit};
+
+try {{
+  // Build query
+  $query = \\Drupal::entityQuery($entity_type)
+    ->accessCheck(FALSE)
+    ->range(0, $limit);
+
+  // Add bundle filter
+  if ($bundle) {{
+    $entity_type_def = \\Drupal::entityTypeManager()->getDefinition($entity_type);
+    $bundle_key = $entity_type_def->getKey('bundle');
+    if ($bundle_key) {{
+      $query->condition($bundle_key, $bundle);
+    }}
+  }}
+
+  // Add search condition - use CONTAINS for partial matching
+  $query->condition($search_field, $search_value, 'CONTAINS');
+
+  $entity_ids = $query->execute();
+
+  if (empty($entity_ids)) {{
+    echo json_encode(['_not_found' => true]);
+    exit;
+  }}
+
+  // Load entities
+  $entities = \\Drupal::entityTypeManager()->getStorage($entity_type)->loadMultiple($entity_ids);
+  $results = [];
+
+  foreach ($entities as $entity) {{
+    $result = [
+      'id' => $entity->id(),
+      'label' => $entity->label() ?? 'Untitled',
+      'bundle' => $entity->bundle(),
+      'entity_type' => $entity->getEntityTypeId(),
+    ];
+
+    // Add the searched field value
+    if ($entity->hasField($search_field)) {{
+      $field = $entity->get($search_field);
+      if (!$field->isEmpty()) {{
+        $value = $field->value ?? $field->getString();
+        // Truncate long text
+        if (is_string($value) && strlen($value) > 200) {{
+          $value = substr($value, 0, 200) . '...';
+        }}
+        $result['search_field_value'] = $value;
+      }}
+    }}
+
+    // Add URL if available
+    if ($entity->hasLinkTemplate('canonical')) {{
+      $result['path'] = $entity->toUrl('canonical', ['absolute' => false])->toString();
+    }}
+
+    // Add created/changed for nodes
+    if (method_exists($entity, 'getCreatedTime')) {{
+      $result['created'] = date('Y-m-d H:i:s', $entity->getCreatedTime());
+    }}
+
+    // Add status for nodes
+    if (method_exists($entity, 'isPublished')) {{
+      $result['published'] = $entity->isPublished();
+    }}
+
+    // Add email for users
+    if ($entity_type === 'user' && $entity->hasField('mail')) {{
+      $result['email'] = $entity->get('mail')->value;
+    }}
+
+    $results[] = $result;
+  }}
+
+  echo json_encode($results, JSON_PRETTY_PRINT);
+
+}} catch (\\Exception $e) {{
+  echo json_encode(['_error' => true, '_message' => $e->getMessage()]);
+}}
+"""
+
+        result = subprocess.run(
+            drush_cmd + ["eval", php],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(drupal_root),
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: {result.stderr}"
+
+        # Parse JSON result
+        import json
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return f"❌ ERROR: Invalid response from drush\n{result.stdout}"
+
+        # Check if not found
+        if isinstance(data, dict) and data.get("_not_found"):
+            output = []
+            output.append("NO RESULTS FOUND")
+            output.append("=" * 80)
+            output.append("")
+            output.append(f"Search: {entity_type}")
+            if bundle:
+                output.append(f"Bundle: {bundle}")
+            output.append(f"Field: {search_field}")
+            output.append(f"Value: {search_value}")
+            output.append("")
+            output.append("No entities match this search.")
+            output.append("")
+            output.append("Tips:")
+            output.append("- Check spelling of search value")
+            output.append("- Try a shorter/partial search term")
+            output.append("- Verify the field name is correct")
+            output.append("- Check if bundle filter is too restrictive")
+            return "\n".join(output)
+
+        # Check for error
+        if isinstance(data, dict) and data.get("_error"):
+            error_msg = data.get("_message", "Unknown error")
+            if "Unknown field" in error_msg or "does not have a field" in error_msg:
+                return f"❌ ERROR: Field '{search_field}' does not exist on {entity_type}\n\nTip: Use get_entity_structure('{entity_type}') to see available fields"
+            return f"❌ ERROR: {error_msg}"
+
+        # Format output
+        output = []
+        output.append(f"SEARCH RESULTS: {entity_type}")
+        if bundle:
+            output.append(f"  Bundle: {bundle}")
+        output.append(f"  Field: {search_field}")
+        output.append(f"  Search: {search_value}")
+        output.append("=" * 80)
+        output.append("")
+        output.append(f"Found {len(data)} result(s):")
+        output.append("")
+
+        for idx, item in enumerate(data, 1):
+            output.append(f"{idx}. {item['label']} (ID: {item['id']})")
+            output.append(f"   Type: {item['entity_type']}.{item['bundle']}")
+
+            if "search_field_value" in item:
+                output.append(f"   {search_field}: {item['search_field_value']}")
+
+            if "path" in item:
+                output.append(f"   Path: {item['path']}")
+
+            if "created" in item:
+                output.append(f"   Created: {item['created']}")
+
+            if "published" in item:
+                status = "Published" if item["published"] else "Unpublished"
+                output.append(f"   Status: {status}")
+
+            if "email" in item:
+                output.append(f"   Email: {item['email']}")
+
+            output.append("")
+
+        if len(data) == limit:
+            output.append(f"Showing first {limit} results. There may be more.")
+            output.append("Increase limit parameter to see more results.")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error searching entities")
+        return f"❌ ERROR: {str(e)}"
+
+
+@mcp.tool()
+def get_entity_by_path(path: str) -> str:
+    """
+    Find entity (node, taxonomy term, etc.) by its URL path or alias.
+
+    Perfect for answering "what entity is at /blog?" or finding nodes by their URL.
+
+    Args:
+        path: The path or URL to look up
+              - Path alias: "/blog", "/about-us"
+              - Internal path: "/node/123", "/taxonomy/term/45"
+              - Full URL: "https://example.com/blog"
+
+    Returns:
+        Entity information including ID, type, bundle, title, and fields
+
+    Examples:
+        get_entity_by_path("/blog")
+        get_entity_by_path("https://drupalcms.ddev.site/blog")
+        get_entity_by_path("/node/123")
+        get_entity_by_path("/taxonomy/term/45")
+    """
+    try:
+        from src.core.config import load_config
+        from src.core.drush import get_drush_command
+        from src.core.database import verify_database_connection
+        import subprocess
+
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+        if not drupal_root.exists():
+            return "❌ ERROR: Drupal root not found"
+
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return f"❌ ERROR: Database required\n{db_msg}"
+
+        drush_cmd = get_drush_command()
+
+        # Extract path from URL if needed
+        if path.startswith("http://") or path.startswith("https://"):
+            from urllib.parse import urlparse
+
+            parsed = urlparse(path)
+            clean_path = parsed.path
+        else:
+            clean_path = path
+
+        # Ensure path starts with /
+        if not clean_path.startswith("/"):
+            clean_path = "/" + clean_path
+
+        # PHP script to find entity by path
+        php = f"""
+$path = "{clean_path}";
+
+// Try to get URL object from path
+$path_validator = \\Drupal::service('path.validator');
+$alias_manager = \\Drupal::service('path_alias.manager');
+
+// First resolve any alias
+$internal_path = $alias_manager->getPathByAlias($path);
+
+// Validate and get URL
+$url = $path_validator->getUrlIfValid($internal_path);
+
+if (!$url || !$url->isRouted()) {{
+    // Try the original path too
+    $url = $path_validator->getUrlIfValid($path);
+}}
+
+if (!$url || !$url->isRouted()) {{
+    echo json_encode(['_not_found' => true, 'path' => $path, 'internal_path' => $internal_path]);
+    exit;
+}}
+
+$route_name = $url->getRouteName();
+$route_params = $url->getRouteParameters();
+
+// Extract entity type and ID from route
+$entity_type = NULL;
+$entity_id = NULL;
+
+// Common entity route patterns
+if ($route_name === 'entity.node.canonical' && isset($route_params['node'])) {{
+    $entity_type = 'node';
+    $entity_id = $route_params['node'];
+}} elseif ($route_name === 'entity.taxonomy_term.canonical' && isset($route_params['taxonomy_term'])) {{
+    $entity_type = 'taxonomy_term';
+    $entity_id = $route_params['taxonomy_term'];
+}} elseif ($route_name === 'entity.user.canonical' && isset($route_params['user'])) {{
+    $entity_type = 'user';
+    $entity_id = $route_params['user'];
+}} elseif ($route_name === 'entity.media.canonical' && isset($route_params['media'])) {{
+    $entity_type = 'media';
+    $entity_id = $route_params['media'];
+}} elseif (preg_match('/^entity\\.([a-z_]+)\\.canonical$/', $route_name, $matches)) {{
+    $entity_type = $matches[1];
+    // Try to find entity ID in route params
+    if (isset($route_params[$entity_type])) {{
+        $entity_id = $route_params[$entity_type];
+    }}
+}}
+
+if (!$entity_type || !$entity_id) {{
+    echo json_encode([
+        '_not_route' => true,
+        'route_name' => $route_name,
+        'route_params' => $route_params,
+        'message' => 'Path exists but does not point to a content entity'
+    ]);
+    exit;
+}}
+
+// Load the entity
+try {{
+    $entity = \\Drupal::entityTypeManager()->getStorage($entity_type)->load($entity_id);
+
+    if (!$entity) {{
+        echo json_encode(['_not_found' => true, 'entity_type' => $entity_type, 'entity_id' => $entity_id]);
+        exit;
+    }}
+
+    // Get basic entity info
+    $data = [
+        'entity_type' => $entity_type,
+        'entity_id' => $entity_id,
+        'bundle' => $entity->bundle(),
+        'label' => $entity->label() ?? 'Untitled',
+        'uuid' => $entity->uuid(),
+        'path_alias' => $path,
+        'internal_path' => $internal_path,
+    ];
+
+    // Language
+    if ($entity->hasField('langcode')) {{
+        $data['language'] = $entity->get('langcode')->value;
+    }}
+
+    // Status
+    if (method_exists($entity, 'isPublished')) {{
+        $data['published'] = $entity->isPublished();
+    }}
+
+    // Created/changed
+    if (method_exists($entity, 'getCreatedTime')) {{
+        $data['created'] = date('Y-m-d H:i:s', $entity->getCreatedTime());
+    }}
+    if (method_exists($entity, 'getChangedTime')) {{
+        $data['changed'] = date('Y-m-d H:i:s', $entity->getChangedTime());
+    }}
+
+    // Owner
+    if (method_exists($entity, 'getOwner')) {{
+        $owner = $entity->getOwner();
+        $data['owner'] = $owner->label() . ' (' . $owner->id() . ')';
+    }}
+
+    echo json_encode($data, JSON_PRETTY_PRINT);
+
+}} catch (\\Exception $e) {{
+    echo json_encode(['_error' => true, '_message' => $e->getMessage()]);
+}}
+"""
+
+        result = subprocess.run(
+            drush_cmd + ["eval", php],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(drupal_root),
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: {result.stderr}"
+
+        # Parse JSON result
+        import json
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return f"❌ ERROR: Invalid response from drush\n{result.stdout}"
+
+        # Check if not found
+        if data.get("_not_found"):
+            output = []
+            output.append("NO ENTITY FOUND")
+            output.append("=" * 80)
+            output.append("")
+            output.append(f"Path: {clean_path}")
+            if data.get("internal_path") and data["internal_path"] != clean_path:
+                output.append(f"Internal path: {data['internal_path']}")
+            output.append("")
+            output.append("This path does not point to a content entity.")
+            output.append("")
+            output.append("💡 Tips:")
+            output.append("- Check if the path is correct")
+            output.append("- Path may point to a view, webform, or other non-entity page")
+            output.append("- Try list_menu_links() to see available paths")
+            return "\n".join(output)
+
+        # Check if not a content entity route
+        if data.get("_not_route"):
+            output = []
+            output.append("PATH FOUND BUT NOT A CONTENT ENTITY")
+            output.append("=" * 80)
+            output.append("")
+            output.append(f"Path: {clean_path}")
+            output.append(f"Route: {data['route_name']}")
+            output.append("")
+            output.append(f"This path exists but points to: {data.get('message', 'Unknown')}")
+            output.append("")
+            output.append("This might be:")
+            output.append("- A view display")
+            output.append("- A webform")
+            output.append("- A custom page/controller")
+            output.append("- An admin page")
+            return "\n".join(output)
+
+        # Check for error
+        if data.get("_error"):
+            return f"❌ ERROR: {data.get('_message', 'Unknown error')}"
+
+        # Format output
+        output = []
+        output.append(f"📄 ENTITY AT PATH: {clean_path}")
+        output.append("=" * 80)
+        output.append("")
+
+        # Basic info
+        output.append(f"Title: {data['label']}")
+        output.append(f"Type: {data['entity_type']}.{data['bundle']}")
+        output.append(f"ID: {data['entity_id']}")
+        output.append(f"UUID: {data['uuid']}")
+        output.append("")
+
+        # Paths
+        if data.get("path_alias") != data.get("internal_path"):
+            output.append(f"Path alias: {data['path_alias']}")
+            output.append(f"Internal path: {data['internal_path']}")
+        else:
+            output.append(f"Path: {data['path_alias']}")
+        output.append("")
+
+        # Additional info
+        if "language" in data:
+            output.append(f"Language: {data['language']}")
+
+        if "published" in data:
+            status = "Published" if data["published"] else "Unpublished"
+            output.append(f"Status: {status}")
+
+        if "created" in data:
+            output.append(f"Created: {data['created']}")
+
+        if "changed" in data:
+            output.append(f"Changed: {data['changed']}")
+
+        if "owner" in data:
+            output.append(f"Author: {data['owner']}")
+
+        output.append("")
+        output.append(
+            f"💡 Use get_entity_info('{data['entity_type']}', {data['entity_id']}) for full details with all fields"
+        )
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error getting entity by path")
+        return f"❌ ERROR: {str(e)}"

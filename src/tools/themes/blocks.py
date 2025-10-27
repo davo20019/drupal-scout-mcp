@@ -317,3 +317,173 @@ def _format_visibility_summary(visibility_details: Dict) -> str:
         parts.append(f"Custom conditions: {', '.join(other_conditions)}")
 
     return " | ".join(parts)
+
+
+@mcp.tool()
+def search_blocks(search_term: str, theme_name: Optional[str] = None) -> str:
+    """
+    Search for blocks by label (both placed blocks and custom block content).
+
+    Perfect for answering "do we have any blocks like Site branding?"
+
+    Args:
+        search_term: Block label to search for (supports partial matching)
+        theme_name: Optional theme to limit search to specific theme's placed blocks
+
+    Returns:
+        List of matching blocks with placement info
+
+    Examples:
+        search_blocks("Site branding")
+        search_blocks("Menu", theme_name="olivero")
+        search_blocks("Footer")
+        search_blocks("User account")
+    """
+    try:
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+
+        if not drupal_root.exists():
+            return "❌ ERROR: Could not determine Drupal root"
+
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return f"❌ ERROR: Database connection required\n\n{db_msg}"
+
+        drush_cmd = get_drush_command()
+
+        # PHP script to search blocks
+        php_script = f"""
+$search_term = "{search_term}";
+$theme_filter = {f'"{theme_name}"' if theme_name else 'NULL'};
+
+$results = [
+  'placed_blocks' => [],
+  'custom_blocks' => [],
+];
+
+// Search placed blocks (block config entities)
+$block_storage = \\Drupal::entityTypeManager()->getStorage('block');
+$query = $block_storage->getQuery()
+  ->accessCheck(FALSE);
+
+if ($theme_filter) {{
+  $query->condition('theme', $theme_filter);
+}}
+
+$block_ids = $query->execute();
+$blocks = $block_storage->loadMultiple($block_ids);
+
+foreach ($blocks as $block) {{
+  $label = $block->label();
+  if (stripos($label, $search_term) !== FALSE) {{
+    $results['placed_blocks'][] = [
+      'id' => $block->id(),
+      'label' => $label,
+      'theme' => $block->getTheme(),
+      'region' => $block->getRegion(),
+      'plugin' => $block->getPluginId(),
+      'weight' => $block->getWeight(),
+      'enabled' => $block->status(),
+    ];
+  }}
+}}
+
+// Search custom block content (block_content entities)
+try {{
+  $block_content_storage = \\Drupal::entityTypeManager()->getStorage('block_content');
+  $query = $block_content_storage->getQuery()
+    ->accessCheck(FALSE);
+
+  $block_content_ids = $query->execute();
+  $block_contents = $block_content_storage->loadMultiple($block_content_ids);
+
+  foreach ($block_contents as $block_content) {{
+    $label = $block_content->label();
+    if (stripos($label, $search_term) !== FALSE) {{
+      $results['custom_blocks'][] = [
+        'id' => $block_content->id(),
+        'uuid' => $block_content->uuid(),
+        'label' => $label,
+        'type' => $block_content->bundle(),
+        'reusable' => $block_content->isReusable(),
+      ];
+    }}
+  }}
+}} catch (\\Exception $e) {{
+  // Block content module might not be enabled
+}}
+
+echo json_encode($results, JSON_PRETTY_PRINT);
+"""
+
+        cmd = drush_cmd + ["eval", php_script]
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, cwd=str(drupal_root)
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: {result.stderr}"
+
+        data = json.loads(result.stdout.strip())
+
+        # Build output
+        output = []
+        output.append(f"🔍 BLOCK SEARCH: {search_term}")
+        if theme_name:
+            output.append(f"  Theme filter: {theme_name}")
+        output.append("=" * 80)
+        output.append("")
+
+        total_found = len(data["placed_blocks"]) + len(data["custom_blocks"])
+
+        if total_found == 0:
+            output.append("No blocks found matching your search.")
+            output.append("")
+            output.append("Tips:")
+            output.append("- Try a shorter search term")
+            output.append("- Check spelling")
+            if theme_name:
+                output.append(f"- Remove theme filter (currently: {theme_name})")
+            return "\n".join(output)
+
+        output.append(f"Found {total_found} block(s):")
+        output.append("")
+
+        # Show placed blocks
+        if data["placed_blocks"]:
+            output.append(f"PLACED BLOCKS ({len(data['placed_blocks'])}):")
+            output.append("These are blocks configured and placed in themes")
+            output.append("")
+
+            for block in data["placed_blocks"]:
+                status = "Enabled" if block["enabled"] else "Disabled"
+                output.append(f"  {block['label']}")
+                output.append(f"    ID: {block['id']}")
+                output.append(f"    Theme: {block['theme']}")
+                output.append(f"    Region: {block['region']}")
+                output.append(f"    Plugin: {block['plugin']}")
+                output.append(f"    Weight: {block['weight']}")
+                output.append(f"    Status: {status}")
+                output.append("")
+
+        # Show custom blocks
+        if data["custom_blocks"]:
+            output.append(f"CUSTOM BLOCK CONTENT ({len(data['custom_blocks'])}):")
+            output.append("These are reusable content blocks created via UI")
+            output.append("")
+
+            for block in data["custom_blocks"]:
+                reusable = "Yes" if block["reusable"] else "No (inline)"
+                output.append(f"  {block['label']}")
+                output.append(f"    ID: {block['id']}")
+                output.append(f"    Type: {block['type']}")
+                output.append(f"    Reusable: {reusable}")
+                output.append(f"    UUID: {block['uuid']}")
+                output.append("")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error searching blocks")
+        return f"❌ ERROR: {str(e)}"
