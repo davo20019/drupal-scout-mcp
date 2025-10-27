@@ -373,6 +373,87 @@ Default: Shows last 50 error/warning entries
 Use case: Debugging production issues, understanding why something broke
 ```
 
+### Theme Analysis Tools
+
+**visualize_theme_regions** - Generate HTML visualization of theme layout
+```
+Example: "Visualize the olivero theme regions"
+Example: "Show me my custom theme layout"
+Example: "Create visual layout for my_theme"
+Creates: Interactive HTML file showing theme structure
+Output: Saves to Drupal root as theme_regions_{theme_name}_{timestamp}.html
+Perfect for: Understanding theme structure, planning block placement, visual documentation
+Shows:
+  - Visual layout of regions (header, sidebars, content, footer)
+  - Auto-detected region positioning based on naming patterns
+  - Blocks placed in each region with weights and ordering
+  - Empty vs populated regions
+  - Block visibility conditions
+  - Color-coded regions for easy identification
+Opens: In browser for visual inspection
+Use case: Theme development, block placement planning, documentation
+Detects: Header, navigation, sidebar (left/right), content, footer regions automatically
+```
+
+**describe_theme** - Get comprehensive theme information and metadata
+```
+Example: "Describe the olivero theme"
+Example: "Tell me about my_custom_theme"
+Example: "What regions does the claro theme have?"
+Shows: Complete theme metadata and structure
+Information:
+  - Name, description, version, compatibility
+  - Base theme and inheritance chain (theme → base → base's base)
+  - All regions defined (8 regions: header, content, footer, etc.)
+  - Libraries defined (CSS/JS files and dependencies)
+  - Theme dependencies
+  - Breakpoints (responsive design breakpoints)
+  - Installation status (installed, default theme, admin theme)
+  - Theme path location
+Perfect for: Theme development, understanding theme structure, checking compatibility
+Use case: Before modifying theme, understanding available regions, library discovery
+```
+
+**get_theme_blocks** - Analyze block placement and configuration per theme
+```
+Example: "Show me blocks in the olivero theme"
+Example: "What blocks are in my_custom_theme?"
+Example: "List block placement for claro"
+Shows: Detailed block assignment and visibility
+Information per region:
+  - All blocks with display order (weights)
+  - Block labels and IDs
+  - Block plugin types
+  - Visibility conditions with smart summaries:
+    * Page restrictions: "Only on: /admin/*" or "Hidden on: /user/*"
+    * Role restrictions: "Only for roles: administrator, editor"
+    * Content type restrictions: "Only on content types: article, page"
+    * Language restrictions: "Only for languages: en, es"
+    * Custom conditions
+  - Empty regions (no blocks assigned)
+  - Block type statistics
+Perfect for: Block placement planning, debugging visibility issues, theme documentation
+Use case: Understanding current layout, planning new blocks, finding unused regions
+Helps: Identify where to place new blocks, why blocks aren't showing
+```
+
+**get_active_themes** - Get status of all installed and available themes
+```
+Example: "Show me active themes"
+Example: "What themes are installed?"
+Example: "List all themes"
+Shows: Theme status overview
+Information:
+  - Default (frontend) theme with path
+  - Admin theme with path
+  - All installed themes with markers [DEFAULT] [ADMIN]
+  - Theme versions and compatibility
+  - Available but not installed themes
+  - Theme paths
+Perfect for: Quick theme status check, finding which themes are active
+Use case: Theme management, checking installations, compatibility verification
+```
+
 ### Security Analysis Tools
 
 **security_audit** - Comprehensive security scan with multiple modes

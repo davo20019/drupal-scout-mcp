@@ -274,7 +274,7 @@ def get_active_themes() -> str:
 def _find_and_parse_theme_info(drupal_root: Path, theme_name: str) -> Optional[Dict]:
     """Find and parse theme .info.yml file."""
     # Try drush first
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
     cmd = drush_cmd + ["theme:list", "--format=json", "--fields=name,path"]
 
     try:
@@ -320,7 +320,7 @@ def _find_and_parse_theme_info(drupal_root: Path, theme_name: str) -> Optional[D
 
 def _get_theme_status(drupal_root: Path, theme_name: str) -> Optional[Dict]:
     """Get theme installation and status info."""
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
 
     php_script = f"""
 $theme_name = '{theme_name}';
@@ -402,7 +402,7 @@ def _get_theme_breakpoints(drupal_root: Path, theme_name: str, theme_path: Optio
 
 def _get_all_themes_with_status(drupal_root: Path) -> list[Dict]:
     """Get all themes with their status."""
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
 
     php_script = """
 $theme_handler = \\Drupal::service('theme_handler');

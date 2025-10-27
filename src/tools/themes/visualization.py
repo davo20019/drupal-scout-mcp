@@ -159,7 +159,7 @@ def visualize_theme_regions(theme_name: str, output_path: Optional[str] = None) 
 def _get_theme_info(drupal_root: Path, theme_name: str) -> Optional[Dict]:
     """Get theme information from .info.yml file."""
     # Try to find theme path using drush
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
     cmd = drush_cmd + ["theme:list", "--format=json", "--fields=name,path,status"]
 
     try:
@@ -210,7 +210,7 @@ def _get_theme_info(drupal_root: Path, theme_name: str) -> Optional[Dict]:
 
 def _get_theme_blocks_data(drupal_root: Path, theme_name: str) -> Dict[str, List[Dict]]:
     """Get blocks assigned to each region for the theme."""
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
 
     php_script = f"""
 $theme = '{theme_name}';

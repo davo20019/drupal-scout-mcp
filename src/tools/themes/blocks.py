@@ -147,7 +147,7 @@ def get_theme_blocks(theme_name: str) -> str:
 
 def _get_blocks_for_theme(drupal_root: Path, theme_name: str) -> Optional[Dict]:
     """Get all blocks for a theme with detailed information."""
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
 
     php_script = f"""
 $theme = '{theme_name}';
@@ -236,7 +236,7 @@ echo json_encode($result, JSON_UNESCAPED_SLASHES);
 
 def _get_theme_regions(drupal_root: Path, theme_name: str) -> Optional[Dict[str, str]]:
     """Get theme regions from theme info."""
-    drush_cmd = get_drush_command(drupal_root)
+    drush_cmd = get_drush_command()
 
     php_script = f"""
 $theme_name = '{theme_name}';
