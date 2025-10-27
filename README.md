@@ -522,6 +522,165 @@ Use case: "I want to theme the taxonomy_term view", "Override frontpage view dis
 Saves time: No fumbling with URLs or Twig debugging - instant answer
 ```
 
+### Paragraph Analysis Tools
+
+**list_paragraph_types** - List all paragraph types with usage and template status
+```
+Example: "List all paragraph types"
+Example: "Show me paragraph types"
+Perfect for: Quick paragraph overview, identifying duplicates, cleanup planning
+Shows:
+  - Paragraph type machine name and label
+  - Field count per type
+  - Usage count (how many paragraphs exist)
+  - Template status (customized or using default)
+  - Preprocess hook status
+Output: Table format with type, fields, usage, customization status
+Use case: "What paragraph types exist?", "Which paragraphs aren't used?", "Which have custom templates?"
+Token efficient: One call shows everything about all paragraph types
+```
+
+**describe_paragraph_type** - Get comprehensive info about a specific paragraph type
+```
+Example: "Describe the hero_banner paragraph"
+Example: "Show me fields for call_to_action paragraph"
+Example: "What is the text_block paragraph?"
+Perfect for: Understanding paragraph structure, planning edits, finding duplicates
+Shows:
+  - All fields with types and requirements
+  - Usage count and where it's used
+  - Template files and locations
+  - Preprocess hooks
+  - Similar paragraph types (helps find duplicates)
+Use case: Before editing paragraph, understanding what fields it has, finding similar types
+Helps: Identify duplicate functionality, plan field changes safely
+```
+
+**find_paragraph_templates** - Find paragraph template files and preprocess hooks
+```
+Example: "Find templates for hero_banner paragraph"
+Example: "Show all paragraph templates"
+Example: "What templates exist for paragraphs?"
+Perfect for: Theme development, finding customizations
+Searches: Active theme for paragraph--*.html.twig and .theme file for hooks
+Shows:
+  - Template files with naming (paragraph--bundle.html.twig)
+  - Preprocess hooks (hook_preprocess_paragraph__bundle)
+  - Template naming examples if none found
+Use case: "How is this paragraph themed?", "What paragraphs have custom templates?"
+```
+
+**get_paragraph_usage** - Get usage statistics for paragraph types
+```
+Example: "Show usage for hero_banner paragraph"
+Example: "How many call_to_action paragraphs exist?"
+Example: "Get usage stats for all paragraphs"
+Perfect for: Usage analysis, cleanup planning
+Shows: Count of paragraph entities per type
+Fast: Direct entity query for quick counts
+Use case: "Is this paragraph type being used?", "How many times is it used?"
+```
+
+**check_paragraph_existence** - Check if paragraphs exist for given types
+```
+Example: "Do we have any paragraphs from hero_banner and call_to_action?"
+Example: "Check if text_block paragraphs exist"
+Perfect for: Quick existence check, answering "do we have any?"
+Shows:
+  - Types with content (with counts)
+  - Empty types (no paragraphs)
+Groups: HAS CONTENT vs EMPTY sections
+Use case: Fast check before deeper analysis, "are these paragraph types in use?"
+```
+
+**get_paragraph_references** - Show where paragraphs are used (parent entities)
+```
+Example: "Where is hero_banner used?"
+Example: "Show me what uses call_to_action paragraphs"
+Example: "Which content types use these paragraphs?"
+Perfect for: Understanding paragraph placement, impact analysis
+Shows:
+  - Parent entity types and bundles (e.g., node.article)
+  - Field name that contains the paragraph
+  - Usage count per parent type
+  - Example content items (up to 5 with titles and IDs)
+Use case: "Where are these paragraphs?", "What content will be affected if I change this?"
+Follow-up friendly: Natural response to "check_paragraph_existence"
+```
+
+**find_duplicate_paragraphs** - Find potentially duplicate paragraph types
+```
+Example: "Find duplicate paragraph types"
+Example: "Are there similar paragraph types?"
+Perfect for: Cleanup planning, identifying redundancy
+Analyzes: Field structures to find similar types
+Use case: "Can I merge these paragraph types?", "Do we have duplicate functionality?"
+Helps: Reduce complexity by consolidating similar paragraphs
+```
+
+**export_paragraphs_to_csv** - Export paragraph types to CSV for audit
+```
+Example: "Export all paragraphs to CSV"
+Example: "Export paragraph audit to spreadsheet"
+Perfect for: Team review, documentation, planning
+Output: CSV file with all paragraph metadata
+Use case: Large-scale audit, stakeholder review, migration planning
+```
+
+### Entity & Content Reference Tools
+
+**get_entity_structure** - Get comprehensive entity type information
+```
+Example: "What fields does the node entity have?"
+Shows: Bundles, fields, view displays, form displays
+Combines: Config files + drush (if available)
+Replaces: Multiple drush and grep commands in a single call
+```
+
+**get_entity_references** - Show where entities are referenced by other entities
+```
+Example: "Where are tags used?"
+Example: "What references articles?"
+Example: "Which blog posts use this category?"
+Example: "Show me what uses field_hero_image"
+Perfect for: Understanding entity relationships, impact analysis
+Finds: Which content types, nodes, or other entities reference specific bundles
+Parameters:
+  - entity_type: Target type (node, taxonomy_term, media, etc.)
+  - bundle: Optional bundle filter (article, blog_post, tags)
+  - field_name: Optional field filter (field_category, field_tags)
+  - limit: Max references to show (default 50)
+Shows:
+  - Referencing entity type and bundle
+  - Field name containing the reference
+  - Reference count
+  - Example items (up to 5 with "Parent Title (ID) → Referenced Label")
+Use case: "Where is this taxonomy term used?", "What content links to these articles?"
+Follow-up friendly: Natural after checking entity structure
+Format: Grouped by target bundle, shows parent → child relationships
+```
+
+**get_entity_info** - Get detailed information about a specific entity
+```
+Example: "Give me info about node 56"
+Example: "What is taxonomy term 12?"
+Example: "Show me details for user 1"
+Example: "Describe media 45"
+Perfect for: Debugging, understanding content, quick entity lookup
+Shows:
+  - Basic info: ID, UUID, type/bundle, language, status
+  - Metadata: Created/changed dates, author/owner, path/URL
+  - All field values with smart display:
+    * Simple fields (text, number)
+    * Entity references (shows "Label (ID)" of referenced entities)
+    * Files/links (shows URIs)
+    * Multi-value fields (lists all values, up to 10)
+    * Long text auto-truncated to 200 chars
+Supports: Any entity type (node, user, taxonomy_term, media, paragraph, etc.)
+Use case: "What's in this node?", "Show me this user's profile", "What fields does this have?"
+Format: Clean sections for Basic Info and Fields, easy to read
+```
+
 ### Security Analysis Tools
 
 **security_audit** - Comprehensive security scan with multiple modes
@@ -1721,7 +1880,7 @@ Scout will attempt to auto-detect drush, but this may fail in MCP environments.
 
 ### Drush Configuration (Important!)
 
-**15 out of 51 tools require drush** to access the Drupal database:
+**18 out of 61 tools require drush** to access the Drupal database:
 - `get_taxonomy_info()` - Taxonomy usage analysis
 - `get_entity_structure()` - Entity/bundle information
 - `get_field_info()` - Field configurations

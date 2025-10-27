@@ -792,3 +792,501 @@ def _get_fields_from_files(
                 continue
 
     return list(fields_data.values())
+
+
+@mcp.tool()
+def get_entity_references(
+    entity_type: str,
+    bundle: Optional[str] = None,
+    field_name: Optional[str] = None,
+    limit: int = 50,
+) -> str:
+    """
+    Show where entities are referenced by other entities.
+
+    Finds which content types, nodes, or other entities reference specific bundles.
+    Perfect for answering "where are these used?" or "which blog posts use this category?"
+
+    Args:
+        entity_type: The entity type to analyze (e.g., "node", "taxonomy_term", "media")
+        bundle: Optional bundle to filter (e.g., "article", "blog_post", "tags")
+        field_name: Optional field name to filter (e.g., "field_category", "field_tags")
+        limit: Maximum number of references to show per type (default 50)
+
+    Returns:
+        List of parent entities that reference the specified entities
+
+    Examples:
+        get_entity_references("taxonomy_term", "tags")  # Where are tags used?
+        get_entity_references("node", "article")  # What references articles?
+        get_entity_references("media", field_name="field_hero_image")  # What uses this image field?
+        get_entity_references("node", "blog_post", "field_category")  # Blog posts with categories
+    """
+    try:
+        from src.core.config import load_config
+        from src.core.drush import get_drush_command
+        from src.core.database import verify_database_connection
+        import subprocess
+
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+        if not drupal_root.exists():
+            return "❌ ERROR: Drupal root not found"
+
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return f"❌ ERROR: Database required\n{db_msg}"
+
+        drush_cmd = get_drush_command()
+
+        # PHP script to find entity references
+        php = f"""
+$limit = {limit};
+$target_entity_type = "{entity_type}";
+$target_bundle = {f'"{bundle}"' if bundle else 'NULL'};
+$target_field = {f'"{field_name}"' if field_name else 'NULL'};
+
+// Find all entity reference fields that point to our target entity type
+$field_map = \\Drupal::service('entity_field.manager')->getFieldMapByFieldType('entity_reference');
+$results = [];
+
+foreach ($field_map as $referencing_entity_type => $fields) {{
+  foreach ($fields as $referencing_field_name => $field_info) {{
+    // If field filter is set, skip if this isn't the field we want
+    if ($target_field && $referencing_field_name !== $target_field) {{
+      continue;
+    }}
+
+    // Load field storage config to check target type
+    $field_storage = \\Drupal::entityTypeManager()
+      ->getStorage('field_storage_config')
+      ->load($referencing_entity_type . '.' . $referencing_field_name);
+
+    if (!$field_storage) {{
+      continue;
+    }}
+
+    $storage_settings = $field_storage->getSettings();
+    $field_target_type = $storage_settings['target_type'] ?? NULL;
+
+    // Skip if this field doesn't reference our target entity type
+    if ($field_target_type !== $target_entity_type) {{
+      continue;
+    }}
+
+    // Load field configs to check target bundles
+    $field_configs = \\Drupal::entityTypeManager()
+      ->getStorage('field_config')
+      ->loadByProperties(['field_name' => $referencing_field_name]);
+
+    foreach ($field_configs as $field_config) {{
+      $settings = $field_config->getSettings();
+      $handler_settings = $settings['handler_settings'] ?? [];
+      $allowed_bundles = $handler_settings['target_bundles'] ?? [];
+
+      // If bundle filter is set, skip if this field doesn't allow it
+      if ($target_bundle && !empty($allowed_bundles) && !in_array($target_bundle, $allowed_bundles)) {{
+        continue;
+      }}
+
+      // Query entities that use this field
+      $query = \\Drupal::entityQuery($referencing_entity_type)
+        ->accessCheck(FALSE)
+        ->condition($referencing_field_name, NULL, 'IS NOT NULL')
+        ->range(0, $limit);
+
+      $entity_ids = $query->execute();
+
+      if (!empty($entity_ids)) {{
+        $entities = \\Drupal::entityTypeManager()
+          ->getStorage($referencing_entity_type)
+          ->loadMultiple($entity_ids);
+
+        foreach ($entities as $entity) {{
+          $field_value = $entity->get($referencing_field_name)->getValue();
+
+          foreach ($field_value as $item) {{
+            if (isset($item['target_id'])) {{
+              // Load the referenced entity to check its bundle
+              $referenced_entity = \\Drupal::entityTypeManager()
+                ->getStorage($target_entity_type)
+                ->load($item['target_id']);
+
+              if ($referenced_entity) {{
+                $referenced_bundle = $referenced_entity->bundle();
+
+                // Apply bundle filter
+                if ($target_bundle && $referenced_bundle !== $target_bundle) {{
+                  continue;
+                }}
+
+                $entity_label = $entity->label() ?? 'Untitled';
+                $entity_bundle = $entity->bundle();
+                $referenced_label = $referenced_entity->label() ?? 'Untitled';
+
+                $key = "$referencing_entity_type|$entity_bundle|$target_entity_type|$referenced_bundle|$referencing_field_name";
+                if (!isset($results[$key])) {{
+                  $results[$key] = [
+                    'referencing_entity_type' => $referencing_entity_type,
+                    'referencing_bundle' => $entity_bundle,
+                    'target_entity_type' => $target_entity_type,
+                    'target_bundle' => $referenced_bundle,
+                    'field_name' => $referencing_field_name,
+                    'count' => 0,
+                    'examples' => []
+                  ];
+                }}
+
+                $results[$key]['count']++;
+                if (count($results[$key]['examples']) < 5) {{
+                  $results[$key]['examples'][] = $entity_label . ' (' . $entity->id() . ') → ' . $referenced_label;
+                }}
+              }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}
+
+// Output results
+foreach ($results as $data) {{
+  echo $data['referencing_entity_type'] . '|' . $data['referencing_bundle'] . '|' . $data['target_entity_type'] . '|' . $data['target_bundle'] . '|' . $data['field_name'] . '|' . $data['count'] . '|' . implode(';', $data['examples']) . "\\n";
+}}
+"""
+
+        result = subprocess.run(
+            drush_cmd + ["eval", php],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            cwd=str(drupal_root),
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: {result.stderr}"
+
+        # Parse results
+        output = []
+        title_parts = [f"📍 ENTITY REFERENCES: {entity_type}"]
+        if bundle:
+            title_parts.append(f".{bundle}")
+        if field_name:
+            title_parts.append(f" (field: {field_name})")
+        output.append("".join(title_parts))
+        output.append("=" * 80)
+        output.append("")
+
+        if not result.stdout.strip():
+            output.append(f"No references found to {entity_type}")
+            if bundle:
+                output.append(f"\nℹ️  The '{bundle}' bundle may not be referenced anywhere,")
+                output.append("   or it may not exist in the system.")
+            return "\n".join(output)
+
+        # Group by target bundle
+        by_target = {}
+        for line in result.stdout.strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|")
+                if len(parts) >= 7:
+                    ref_entity_type = parts[0]
+                    ref_bundle = parts[1]
+                    # target_entity_type = parts[2]  # Not needed, already known
+                    target_bundle = parts[3]
+                    field = parts[4]
+                    count = parts[5]
+                    examples = parts[6].split(";") if parts[6] else []
+
+                    if target_bundle not in by_target:
+                        by_target[target_bundle] = []
+
+                    by_target[target_bundle].append(
+                        {
+                            "ref_entity_type": ref_entity_type,
+                            "ref_bundle": ref_bundle,
+                            "field_name": field,
+                            "count": int(count),
+                            "examples": examples,
+                        }
+                    )
+
+        # Format output
+        for target_bundle, references in sorted(by_target.items()):
+            output.append(f"TARGET: {entity_type}.{target_bundle}")
+            output.append("-" * 80)
+
+            for ref in references:
+                output.append(
+                    f"\n  📦 Referenced by: {ref['ref_entity_type']}.{ref['ref_bundle']} (field: {ref['field_name']})"
+                )
+                output.append(f"     {ref['count']} reference(s)")
+
+                if ref["examples"]:
+                    output.append("     Examples:")
+                    for example in ref["examples"][:5]:
+                        output.append(f"       • {example}")
+
+            output.append("")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error getting entity references")
+        return f"❌ ERROR: {str(e)}"
+
+
+@mcp.tool()
+def get_entity_info(entity_type: str, entity_id: int) -> str:
+    """
+    Get detailed information about a specific entity (node, user, term, etc.).
+
+    Perfect for answering "give me info about node 56" or "what is taxonomy term 12?"
+
+    Args:
+        entity_type: The entity type (e.g., "node", "user", "taxonomy_term", "media", "paragraph")
+        entity_id: The entity ID
+
+    Returns:
+        Comprehensive entity information including:
+        - Title/label and basic info
+        - Bundle type
+        - Created/changed dates
+        - Author/owner
+        - Published status
+        - All field values
+        - Referenced entities (with labels)
+        - URL/path
+
+    Examples:
+        get_entity_info("node", 56)
+        get_entity_info("taxonomy_term", 12)
+        get_entity_info("user", 1)
+        get_entity_info("media", 45)
+    """
+    try:
+        from src.core.config import load_config
+        from src.core.drush import get_drush_command
+        from src.core.database import verify_database_connection
+        import subprocess
+
+        config = load_config()
+        drupal_root = Path(config.get("drupal_root", ""))
+        if not drupal_root.exists():
+            return "❌ ERROR: Drupal root not found"
+
+        db_ok, db_msg = verify_database_connection()
+        if not db_ok:
+            return f"❌ ERROR: Database required\n{db_msg}"
+
+        drush_cmd = get_drush_command()
+
+        # PHP script to get entity details
+        php = f"""
+$entity_type = "{entity_type}";
+$entity_id = {entity_id};
+
+try {{
+  $entity = \\Drupal::entityTypeManager()->getStorage($entity_type)->load($entity_id);
+
+  if (!$entity) {{
+    echo json_encode(['_not_found' => true]);
+    exit;
+  }}
+
+  $data = [
+    'id' => $entity->id(),
+    'uuid' => $entity->uuid(),
+    'label' => $entity->label() ?? 'Untitled',
+    'bundle' => $entity->bundle(),
+    'entity_type' => $entity->getEntityTypeId(),
+  ];
+
+  // Language
+  if ($entity->hasField('langcode')) {{
+    $data['language'] = $entity->get('langcode')->value;
+  }}
+
+  // Created/changed timestamps
+  if (method_exists($entity, 'getCreatedTime')) {{
+    $data['created'] = date('Y-m-d H:i:s', $entity->getCreatedTime());
+  }}
+  if (method_exists($entity, 'getChangedTime')) {{
+    $data['changed'] = date('Y-m-d H:i:s', $entity->getChangedTime());
+  }}
+
+  // Published status
+  if (method_exists($entity, 'isPublished')) {{
+    $data['published'] = $entity->isPublished();
+  }}
+
+  // Owner/author
+  if (method_exists($entity, 'getOwner')) {{
+    $owner = $entity->getOwner();
+    $data['owner'] = $owner->label() . ' (' . $owner->id() . ')';
+  }}
+
+  // URL/path
+  if ($entity->hasLinkTemplate('canonical')) {{
+    $url = $entity->toUrl('canonical', ['absolute' => false])->toString();
+    $data['path'] = $url;
+  }}
+
+  // Get all fields
+  $fields = [];
+  $field_definitions = $entity->getFieldDefinitions();
+
+  foreach ($field_definitions as $field_name => $field_definition) {{
+    // Skip base fields that we already covered
+    if (in_array($field_name, ['id', 'uuid', 'langcode', 'created', 'changed', 'status', 'uid', 'title', 'name'])) {{
+      continue;
+    }}
+
+    if (!$entity->hasField($field_name)) {{
+      continue;
+    }}
+
+    $field = $entity->get($field_name);
+    if ($field->isEmpty()) {{
+      continue;
+    }}
+
+    $field_type = $field_definition->getType();
+    $field_label = $field_definition->getLabel();
+    $values = [];
+
+    foreach ($field->getValue() as $item) {{
+      if (isset($item['target_id'])) {{
+        // Entity reference
+        $referenced_entity = \\Drupal::entityTypeManager()
+          ->getStorage($field->getSetting('target_type'))
+          ->load($item['target_id']);
+        if ($referenced_entity) {{
+          $values[] = $referenced_entity->label() . ' (' . $item['target_id'] . ')';
+        }} else {{
+          $values[] = 'Deleted (' . $item['target_id'] . ')';
+        }}
+      }} elseif (isset($item['value'])) {{
+        // Simple value
+        $value = $item['value'];
+        // Truncate long text
+        if (is_string($value) && strlen($value) > 200) {{
+          $value = substr($value, 0, 200) . '...';
+        }}
+        $values[] = $value;
+      }} elseif (isset($item['uri'])) {{
+        // Link/file
+        $values[] = $item['uri'];
+      }} else {{
+        // Complex field - show first key
+        $first_key = array_key_first($item);
+        if ($first_key) {{
+          $values[] = $first_key . ': ' . $item[$first_key];
+        }}
+      }}
+    }}
+
+    if (!empty($values)) {{
+      $fields[] = [
+        'name' => $field_name,
+        'label' => (string)$field_label,
+        'type' => $field_type,
+        'values' => $values
+      ];
+    }}
+  }}
+
+  $data['fields'] = $fields;
+
+  echo json_encode($data, JSON_PRETTY_PRINT);
+
+}} catch (\\Exception $e) {{
+  echo json_encode(['_error' => true, '_message' => $e->getMessage()]);
+}}
+"""
+
+        result = subprocess.run(
+            drush_cmd + ["eval", php],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(drupal_root),
+        )
+
+        if result.returncode != 0:
+            return f"❌ ERROR: {result.stderr}"
+
+        # Parse JSON result
+        import json
+
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            return f"❌ ERROR: Invalid response from drush\n{result.stdout}"
+
+        # Check if entity not found
+        if data.get("_not_found"):
+            return f"❌ ERROR: {entity_type} with ID {entity_id} not found"
+
+        # Check for error
+        if data.get("_error"):
+            return f"❌ ERROR: {data.get('_message', 'Unknown error')}"
+
+        # Format output
+        output = []
+        output.append(f"📄 {entity_type.upper()}: {data['label']}")
+        output.append("=" * 80)
+        output.append("")
+
+        # Basic info
+        output.append("BASIC INFORMATION:")
+        output.append(f"  ID: {data['id']}")
+        output.append(f"  UUID: {data['uuid']}")
+        output.append(f"  Type: {entity_type}.{data['bundle']}")
+
+        if "language" in data:
+            output.append(f"  Language: {data['language']}")
+
+        if "published" in data:
+            status = "Published" if data["published"] else "Unpublished"
+            output.append(f"  Status: {status}")
+
+        if "created" in data:
+            output.append(f"  Created: {data['created']}")
+
+        if "changed" in data:
+            output.append(f"  Changed: {data['changed']}")
+
+        if "owner" in data:
+            output.append(f"  Author: {data['owner']}")
+
+        if "path" in data:
+            output.append(f"  Path: {data['path']}")
+
+        output.append("")
+
+        # Fields
+        if data.get("fields"):
+            output.append(f"FIELDS ({len(data['fields'])}):")
+            for field in data["fields"]:
+                output.append(f"\n  {field['label']} ({field['name']})")
+                output.append(f"    Type: {field['type']}")
+
+                values = field["values"]
+                if len(values) == 1:
+                    output.append(f"    Value: {values[0]}")
+                else:
+                    output.append(f"    Values ({len(values)}):")
+                    for idx, value in enumerate(values[:10], 1):
+                        output.append(f"      {idx}. {value}")
+                    if len(values) > 10:
+                        output.append(f"      ... and {len(values) - 10} more")
+        else:
+            output.append("FIELDS: None")
+
+        return "\n".join(output)
+
+    except Exception as e:
+        logger.exception("Error getting entity info")
+        return f"❌ ERROR: {str(e)}"
