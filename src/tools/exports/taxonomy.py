@@ -385,11 +385,11 @@ def export_taxonomy_usage_to_excel(
     ```
     # Basic export (quick mode - essential columns only)
     export_taxonomy_usage_to_excel(vocabulary="tags")
-    # Exports: Term Name, Term Description, Node ID, Node Title, Node Type, Node Status, Node URL Alias
+    # Exports: Term ID, Term Name, Node ID, Node Title, Node Type, Node Status, Node URL Alias
 
-    # Full details mode (all 20+ columns)
+    # Full details mode (all 21 columns)
     export_taxonomy_usage_to_excel(vocabulary="tags", full_details=True)
-    # Adds: Canonical URL, Author, Dates, Language, Taxonomy Terms, Entity Refs, Metatags, etc.
+    # Adds: Term Description, Canonical URL, Author, Dates, Language, Taxonomy Terms, Entity Refs, Metatags, etc.
 
     # Include code scanning
     export_taxonomy_usage_to_excel(vocabulary="categories", check_code=True)
@@ -497,7 +497,6 @@ def export_taxonomy_usage_to_excel(
             columns = [
                 "Term ID",
                 "Term Name",
-                "Term Description",
                 "Node ID",
                 "Node Title",
                 "Node Type",
@@ -535,8 +534,16 @@ def export_taxonomy_usage_to_excel(
                 # Write term with no pages
                 sheet.cell(row=current_row, column=1, value=tid)
                 sheet.cell(row=current_row, column=2, value=term_name)
-                sheet.cell(row=current_row, column=3, value=term_description)
-                sheet.cell(row=current_row, column=4, value="(No pages)")
+
+                if full_details:
+                    # Full mode: include description
+                    sheet.cell(row=current_row, column=3, value=term_description)
+                    no_pages_col = 4
+                else:
+                    # Quick mode: skip description
+                    no_pages_col = 3
+
+                sheet.cell(row=current_row, column=no_pages_col, value="(No pages)")
 
                 if include_formatting:
                     sheet.cell(row=current_row, column=1).alignment = Alignment(
@@ -545,11 +552,16 @@ def export_taxonomy_usage_to_excel(
                     sheet.cell(row=current_row, column=2).alignment = Alignment(
                         vertical="top", wrap_text=True
                     )
-                    sheet.cell(row=current_row, column=3).alignment = Alignment(
-                        vertical="top", wrap_text=True
+                    if full_details:
+                        sheet.cell(row=current_row, column=3).alignment = Alignment(
+                            vertical="top", wrap_text=True
+                        )
+                    sheet.cell(row=current_row, column=no_pages_col).alignment = Alignment(
+                        vertical="center"
                     )
-                    sheet.cell(row=current_row, column=4).alignment = Alignment(vertical="center")
-                    sheet.cell(row=current_row, column=4).font = Font(italic=True, color="808080")
+                    sheet.cell(row=current_row, column=no_pages_col).font = Font(
+                        italic=True, color="808080"
+                    )
                     # Light gray background for no-pages row
                     for col in range(1, len(columns) + 1):
                         sheet.cell(row=current_row, column=col).fill = PatternFill(
@@ -562,10 +574,16 @@ def export_taxonomy_usage_to_excel(
                 start_row = current_row
 
                 for node in nodes:
-                    # Term ID, name and description in first three columns
+                    # Term ID and name always included
                     sheet.cell(row=current_row, column=1, value=tid)
                     sheet.cell(row=current_row, column=2, value=term_name)
-                    sheet.cell(row=current_row, column=3, value=term_description)
+
+                    # Term description only in full mode
+                    if full_details:
+                        sheet.cell(row=current_row, column=3, value=term_description)
+                        node_start_col = 4
+                    else:
+                        node_start_col = 3
 
                     # Node details in remaining columns
                     if full_details:
@@ -612,25 +630,29 @@ def export_taxonomy_usage_to_excel(
                             node.get("url_alias"),
                         ]
 
-                    for col_idx, value in enumerate(node_data, start=4):
+                    for col_idx, value in enumerate(node_data, start=node_start_col):
                         cell = sheet.cell(row=current_row, column=col_idx, value=value)
                         if include_formatting:
                             cell.alignment = Alignment(vertical="top", wrap_text=True)
 
                     current_row += 1
 
-                # Merge term ID, name and description cells across all rows for this term
+                # Merge term ID and name cells across all rows for this term
                 end_row = current_row - 1
                 if include_formatting and end_row > start_row:
+                    # Always merge Term ID and Name
                     sheet.merge_cells(
                         start_row=start_row, start_column=1, end_row=end_row, end_column=1
                     )
                     sheet.merge_cells(
                         start_row=start_row, start_column=2, end_row=end_row, end_column=2
                     )
-                    sheet.merge_cells(
-                        start_row=start_row, start_column=3, end_row=end_row, end_column=3
-                    )
+
+                    # Only merge description in full mode
+                    if full_details:
+                        sheet.merge_cells(
+                            start_row=start_row, start_column=3, end_row=end_row, end_column=3
+                        )
 
                     # Center align and apply formatting to merged cells
                     sheet.cell(row=start_row, column=1).alignment = Alignment(
@@ -639,9 +661,10 @@ def export_taxonomy_usage_to_excel(
                     sheet.cell(row=start_row, column=2).alignment = Alignment(
                         vertical="center", horizontal="left", wrap_text=True
                     )
-                    sheet.cell(row=start_row, column=3).alignment = Alignment(
-                        vertical="center", horizontal="left", wrap_text=True
-                    )
+                    if full_details:
+                        sheet.cell(row=start_row, column=3).alignment = Alignment(
+                            vertical="center", horizontal="left", wrap_text=True
+                        )
 
                     # Bold the term name
                     sheet.cell(row=start_row, column=2).font = Font(bold=True)

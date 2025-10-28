@@ -301,8 +301,8 @@ Layout:
   - Easy visual grouping by term
 Features:
   - Two detail modes:
-    * Quick (default): 7 essential columns - ID, Title, Type, Status, URL Alias
-    * Full (full_details=True): 20+ columns - adds Canonical URL, Author, Dates,
+    * Quick (default): 7 essential columns - Term ID, Term Name, Node ID, Title, Type, Status, URL Alias
+    * Full (full_details=True): 21 columns - adds Term Description, Canonical URL, Author, Dates,
       Language, Taxonomy Terms, Entity Refs, Metatags, Revisions, Promote/Sticky
   - Professional formatting: Bold term names, merged cells, auto-sized columns,
     freeze panes, filters
