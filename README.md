@@ -87,12 +87,24 @@ git clone https://github.com/davo20019/drupal-scout-mcp.git
 cd drupal-scout-mcp
 ```
 
-2. **Install dependencies**
+2. **Create virtual environment (recommended)**
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. **Install dependencies**
 ```bash
 pip3 install -r requirements.txt
 ```
 
-3. **Configure Drupal path**
+> **💡 Updating Dependencies:** When new versions are released with new features (like Excel export), update your installation:
+> ```bash
+> source venv/bin/activate  # Activate your venv first
+> pip3 install -r requirements.txt --upgrade
+> ```
+
+4. **Configure Drupal path**
 ```bash
 mkdir -p ~/.config/drupal-scout
 cp config.example.json ~/.config/drupal-scout/config.json
@@ -266,6 +278,48 @@ Modes:
 Handles: Unlimited terms (no 100-term limit like get_all_taxonomy_usage)
 Use case: Exporting 500+ terms, spreadsheet analysis, team reporting
 Perfect for: Large vocabularies where token limits prevent full display
+```
+
+**export_taxonomy_usage_to_excel** - Export taxonomy to Excel with merged cell layout showing all pages per term
+```
+Example: "Export tags to Excel with all page information"
+Example: "Export categories to Excel with node details"
+Bypasses: MCP token limits by writing directly to filesystem
+Perfect for: Detailed taxonomy analysis with complete node information for each term
+Output: Saves to Drupal root directory as taxonomy_export_{vocab}_{timestamp}.xlsx
+Layout:
+  | Term Name    | Term Desc | Node ID | Title      | Status    | URL    | ... |
+  |--------------|-----------|---------|------------|-----------|--------|-----|
+  | Technology   | Tech info | 123     | AI Article | published | /ai    | ... |
+  |      ↓       |     ↓     | 124     | Web Dev    | published | /web   | ... |
+  |      ↓       |     ↓     | 125     | Cloud      | published | /cloud | ... |
+  | Business     | Biz info  | 201     | Marketing  | published | /mkt   | ... |
+
+  - Single sheet (no tabs) - handles thousands of pages easily
+  - Term name/description in merged cells spanning all page rows
+  - Each page gets its own row with complete details
+  - Easy visual grouping by term
+Features:
+  - Two detail modes:
+    * Quick (default): 7 essential columns - ID, Title, Type, Status, URL Alias
+    * Full (full_details=True): 20+ columns - adds Canonical URL, Author, Dates,
+      Language, Taxonomy Terms, Entity Refs, Metatags, Revisions, Promote/Sticky
+  - Professional formatting: Bold term names, merged cells, auto-sized columns,
+    freeze panes, filters
+  - Terms without pages show "(No pages)" with gray background
+Parameters:
+  - full_details: False (default) = quick mode, True = all node details
+  - include_formatting: Apply Excel styling (default: True)
+  - check_code: Scan custom code for term references (default: False)
+  - limit: Limit number of terms (default: 0 = all)
+Use case:
+  - Detailed content audit: See exactly which pages use each term
+  - Migration planning: Export complete page metadata for each taxonomy term
+  - SEO analysis: Review URLs, paths, and metatags grouped by term
+  - Easy visual scanning: Merged cells show clear term groupings
+Requires: openpyxl library (pip install openpyxl)
+Performance: 100 terms/500 pages ~15s, 500 terms/2000 pages ~60s
+Capacity: Can handle tens of thousands of rows (Excel limit: 1M+ rows)
 ```
 
 **export_nodes_to_csv** - Export content/nodes directly to CSV for audits and migrations

@@ -5,3 +5,6 @@ pytest>=7.0.0
 # For enhanced security scanning accuracy with AST-based analysis
 tree-sitter>=0.21.0
 tree-sitter-php>=0.23.0
+
+# For Excel export functionality
+openpyxl>=3.1.0
