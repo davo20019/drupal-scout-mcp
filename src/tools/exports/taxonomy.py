@@ -20,6 +20,7 @@ try:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+
     OPENPYXL_AVAILABLE = True
 except ImportError:
     OPENPYXL_AVAILABLE = False
@@ -400,11 +401,13 @@ def export_taxonomy_usage_to_excel(
     try:
         # Check if openpyxl is available
         if not OPENPYXL_AVAILABLE:
-            return json.dumps({
-                "_error": True,
-                "message": "openpyxl library not installed. Install with: pip install openpyxl",
-                "suggestion": "Run: pip install openpyxl"
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": "openpyxl library not installed. Install with: pip install openpyxl",
+                    "suggestion": "Run: pip install openpyxl",
+                }
+            )
 
         # Get config and verify database connection
         success, result, msg = get_export_config()
@@ -425,8 +428,8 @@ def export_taxonomy_usage_to_excel(
 
         # Validate path is writable and has .xlsx extension
         output_file = Path(output_path)
-        if output_file.suffix.lower() != '.xlsx':
-            output_path = str(output_file.with_suffix('.xlsx'))
+        if output_file.suffix.lower() != ".xlsx":
+            output_path = str(output_file.with_suffix(".xlsx"))
             output_file = Path(output_path)
 
         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -440,11 +443,13 @@ def export_taxonomy_usage_to_excel(
         )
 
         if not terms:
-            return json.dumps({
-                "_error": True,
-                "message": f"Could not fetch terms for vocabulary '{vocabulary}'",
-                "suggestion": "Verify vocabulary machine name is correct.",
-            })
+            return json.dumps(
+                {
+                    "_error": True,
+                    "message": f"Could not fetch terms for vocabulary '{vocabulary}'",
+                    "suggestion": "Verify vocabulary machine name is correct.",
+                }
+            )
 
         total_terms = len(terms)
 
@@ -453,7 +458,7 @@ def export_taxonomy_usage_to_excel(
             terms = _add_code_usage_to_terms(terms, drupal_root)
 
         # Sort terms by page count (descending) - terms with pages first, then terms without pages
-        terms = sorted(terms, key=lambda t: len(t.get('nodes', [])), reverse=True)
+        terms = sorted(terms, key=lambda t: len(t.get("nodes", [])), reverse=True)
 
         # Create Excel workbook with single sheet
         logger.info(f"Creating Excel workbook with {total_terms} terms...")
@@ -485,7 +490,7 @@ def export_taxonomy_usage_to_excel(
                 "Node Entity References",
                 "Node Metatag Title",
                 "Node Metatag Description",
-                "Node Revision Count"
+                "Node Revision Count",
             ]
         else:
             # Quick mode: Essential columns only (default)
@@ -497,7 +502,7 @@ def export_taxonomy_usage_to_excel(
                 "Node Title",
                 "Node Type",
                 "Node Status",
-                "Node URL Alias"
+                "Node URL Alias",
             ]
 
         # Write header row
@@ -534,9 +539,15 @@ def export_taxonomy_usage_to_excel(
                 sheet.cell(row=current_row, column=4, value="(No pages)")
 
                 if include_formatting:
-                    sheet.cell(row=current_row, column=1).alignment = Alignment(vertical="top", wrap_text=True)
-                    sheet.cell(row=current_row, column=2).alignment = Alignment(vertical="top", wrap_text=True)
-                    sheet.cell(row=current_row, column=3).alignment = Alignment(vertical="top", wrap_text=True)
+                    sheet.cell(row=current_row, column=1).alignment = Alignment(
+                        vertical="top", wrap_text=True
+                    )
+                    sheet.cell(row=current_row, column=2).alignment = Alignment(
+                        vertical="top", wrap_text=True
+                    )
+                    sheet.cell(row=current_row, column=3).alignment = Alignment(
+                        vertical="top", wrap_text=True
+                    )
                     sheet.cell(row=current_row, column=4).alignment = Alignment(vertical="center")
                     sheet.cell(row=current_row, column=4).font = Font(italic=True, color="808080")
                     # Light gray background for no-pages row
@@ -560,33 +571,45 @@ def export_taxonomy_usage_to_excel(
                     if full_details:
                         # Full mode: All details
                         node_data = [
-                            node.get('nid'),
-                            node.get('title'),
-                            node.get('type'),
-                            node.get('status'),
-                            node.get('url_alias'),
-                            node.get('canonical_url'),
-                            node.get('author'),
-                            node.get('author_uid'),
-                            datetime.fromtimestamp(node.get('created', 0)).strftime("%Y-%m-%d %H:%M:%S") if node.get('created') else '',
-                            datetime.fromtimestamp(node.get('changed', 0)).strftime("%Y-%m-%d %H:%M:%S") if node.get('changed') else '',
-                            node.get('langcode'),
-                            "YES" if node.get('promote') else "NO",
-                            "YES" if node.get('sticky') else "NO",
-                            " | ".join(node.get('taxonomy_terms', [])),
-                            " | ".join(node.get('entity_references', [])),
-                            node.get('metatag_title'),
-                            node.get('metatag_description'),
-                            node.get('revision_count')
+                            node.get("nid"),
+                            node.get("title"),
+                            node.get("type"),
+                            node.get("status"),
+                            node.get("url_alias"),
+                            node.get("canonical_url"),
+                            node.get("author"),
+                            node.get("author_uid"),
+                            (
+                                datetime.fromtimestamp(node.get("created", 0)).strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                )
+                                if node.get("created")
+                                else ""
+                            ),
+                            (
+                                datetime.fromtimestamp(node.get("changed", 0)).strftime(
+                                    "%Y-%m-%d %H:%M:%S"
+                                )
+                                if node.get("changed")
+                                else ""
+                            ),
+                            node.get("langcode"),
+                            "YES" if node.get("promote") else "NO",
+                            "YES" if node.get("sticky") else "NO",
+                            " | ".join(node.get("taxonomy_terms", [])),
+                            " | ".join(node.get("entity_references", [])),
+                            node.get("metatag_title"),
+                            node.get("metatag_description"),
+                            node.get("revision_count"),
                         ]
                     else:
                         # Quick mode: Essential fields only
                         node_data = [
-                            node.get('nid'),
-                            node.get('title'),
-                            node.get('type'),
-                            node.get('status'),
-                            node.get('url_alias')
+                            node.get("nid"),
+                            node.get("title"),
+                            node.get("type"),
+                            node.get("status"),
+                            node.get("url_alias"),
                         ]
 
                     for col_idx, value in enumerate(node_data, start=4):
@@ -599,14 +622,26 @@ def export_taxonomy_usage_to_excel(
                 # Merge term ID, name and description cells across all rows for this term
                 end_row = current_row - 1
                 if include_formatting and end_row > start_row:
-                    sheet.merge_cells(start_row=start_row, start_column=1, end_row=end_row, end_column=1)
-                    sheet.merge_cells(start_row=start_row, start_column=2, end_row=end_row, end_column=2)
-                    sheet.merge_cells(start_row=start_row, start_column=3, end_row=end_row, end_column=3)
+                    sheet.merge_cells(
+                        start_row=start_row, start_column=1, end_row=end_row, end_column=1
+                    )
+                    sheet.merge_cells(
+                        start_row=start_row, start_column=2, end_row=end_row, end_column=2
+                    )
+                    sheet.merge_cells(
+                        start_row=start_row, start_column=3, end_row=end_row, end_column=3
+                    )
 
                     # Center align and apply formatting to merged cells
-                    sheet.cell(row=start_row, column=1).alignment = Alignment(vertical="center", horizontal="center", wrap_text=True)
-                    sheet.cell(row=start_row, column=2).alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
-                    sheet.cell(row=start_row, column=3).alignment = Alignment(vertical="center", horizontal="left", wrap_text=True)
+                    sheet.cell(row=start_row, column=1).alignment = Alignment(
+                        vertical="center", horizontal="center", wrap_text=True
+                    )
+                    sheet.cell(row=start_row, column=2).alignment = Alignment(
+                        vertical="center", horizontal="left", wrap_text=True
+                    )
+                    sheet.cell(row=start_row, column=3).alignment = Alignment(
+                        vertical="center", horizontal="left", wrap_text=True
+                    )
 
                     # Bold the term name
                     sheet.cell(row=start_row, column=2).font = Font(bold=True)
@@ -634,7 +669,7 @@ def export_taxonomy_usage_to_excel(
             "total_rows": current_row - 2,  # Subtract header and start from 0
             "file_size_kb": file_size_kb,
             "message": f"✅ Successfully exported {total_terms} terms with {total_pages} total pages to {output_path} ({file_size_kb} KB)\n"
-                      f"   Single sheet with {current_row - 2} rows (merged cells for terms with multiple pages)"
+            f"   Single sheet with {current_row - 2} rows (merged cells for terms with multiple pages)",
         }
 
         return json.dumps(result, indent=2)
@@ -1198,7 +1233,7 @@ def _auto_size_columns(sheet, columns):
 
         # Set column width with reasonable limits
         adjusted_width = min(max_length + 2, 60)  # Max 60 chars
-        adjusted_width = max(adjusted_width, 10)   # Min 10 chars
+        adjusted_width = max(adjusted_width, 10)  # Min 10 chars
 
         column_letter = get_column_letter(col_idx)
         sheet.column_dimensions[column_letter].width = adjusted_width
